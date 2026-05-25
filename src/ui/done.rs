@@ -85,7 +85,7 @@ fn draw_heart(ui: &mut Ui) {
     let scale = 0.88f32;
 
     // Slight clockwise lean — real hand-drawn hearts are never perfectly upright.
-    let lean = 0.055f32; // ≈ 3°
+    let lean = 0.05f32; // ≈ 2.9°
     let (sl, cl) = (lean.sin(), lean.cos());
 
     // Index 0 maps to t = π (bottom tip) so the polygon starts at a convex point.
@@ -99,29 +99,23 @@ fn draw_heart(ui: &mut Ui) {
             - 2.0 * (3.0 * t).cos()
             -       (4.0 * t).cos());
 
-        // Lift the top-center V-dip to remove the fill tessellation artifact.
-        // ((t/2).cos())^4  ==  1 at the top-center dip,  0 at the bottom tip.
+        // Raise the top-center dip toward the hump peaks (reduces the V depth).
+        // yf is negative for the upper half of the heart, so SUBTRACTING lifts
+        // the dip higher (more negative = higher on screen).
+        // ((t/2).cos())^4 = 1 at the top-center dip, 0 at the bottom tip.
         let top_lift = ((t * 0.5).cos()).powi(4);
-        let yf = yf_sym + 3.2 * top_lift;
+        let yf = yf_sym - 3.0 * top_lift;
 
-        // Two *independent* wobble curves break the left↔right mirror symmetry.
-        // Amplitudes in heart-formula units; at this scale ≈ 0.88 px/unit visible.
-        let w_r = (t * 2.6 + 0.9).sin() * 1.25
-                + (t * 4.1 - 0.4).cos() * 0.52
-                + (t * 1.2 + 0.2).sin() * 0.28;
-        let w_l = (t * 1.9 - 1.1).sin() * 0.98
-                + (t * 3.5 + 0.6).cos() * 0.58
-                + (t * 5.0 - 0.8).sin() * 0.22;
-
-        // tanh blend: smooth left↔right transition, no hard seam at x = 0.
-        let blend = (xf * 0.22).tanh(); // −1 = full-left, +1 = full-right
-        let w = w_l * (1.0 - blend) * 0.5 + w_r * (1.0 + blend) * 0.5;
+        // Odd-harmonic frequencies produce natural left/right asymmetry without
+        // needing a hard left/right split — the left hump ends up ~1.4 px wider.
+        let w = (t * 1.5 + 0.8).sin() * 1.1
+              + (t * 0.9 - 0.4).cos() * 0.65
+              + (t * 2.3 + 1.1).sin() * 0.35;
 
         let angle = yf.atan2(xf);
         let px = (xf + w * angle.cos()) * scale;
         let py = (yf + w * angle.sin()) * scale;
 
-        // Apply lean (rotation around cx/cy).
         egui::pos2(
             cx + px * cl - py * sl,
             cy + px * sl + py * cl,
