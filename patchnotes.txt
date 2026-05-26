@@ -1,0 +1,3 @@
+• In-app video playback via libmpv (no external player needed)
+• Installer now shows version info and release notes
+• Faster image loading with async thumbnail decode

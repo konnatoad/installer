@@ -38,15 +38,14 @@ pub struct DoneState {
 
 pub struct InstallerApp {
     pub page: Page,
-    pub existing_install: Option<std::path::PathBuf>,
+    pub existing_install: Option<crate::install::ExistingInstall>,
 }
 
 impl InstallerApp {
     pub fn new(_cc: &eframe::CreationContext<'_>) -> Self {
-        let existing = crate::install::detect_existing_install();
         Self {
             page: Page::Welcome,
-            existing_install: existing,
+            existing_install: crate::install::detect_existing_install(),
         }
     }
 }
@@ -65,15 +64,17 @@ impl eframe::App for InstallerApp {
 
                 match &mut self.page {
                     Page::Welcome => {
-                        if let Some(action) = welcome::show(ui, self.existing_install.as_ref()) {
+                        let existing_dir = self.existing_install.as_ref().map(|e| e.dir.as_path());
+                        let installed_ver = self.existing_install.as_ref().and_then(|e| e.version.as_deref());
+                        if let Some(action) = welcome::show(ui, existing_dir, installed_ver) {
                             match action {
                                 welcome::WelcomeAction::Install => {
                                     self.page = Page::Options(InstallOptions::default());
                                 }
                                 welcome::WelcomeAction::Update => {
-                                    if let Some(dir) = &self.existing_install {
+                                    if let Some(existing) = &self.existing_install {
                                         let (tx, rx) = mpsc::channel();
-                                        let dir = dir.clone();
+                                        let dir = existing.dir.clone();
                                         let dir2 = dir.clone();
                                         std::thread::spawn(move || {
                                             crate::install::run_update(&dir, tx);
@@ -92,9 +93,9 @@ impl eframe::App for InstallerApp {
                                     }
                                 }
                                 welcome::WelcomeAction::Remove => {
-                                    if let Some(dir) = &self.existing_install {
+                                    if let Some(existing) = &self.existing_install {
                                         let (tx, rx) = mpsc::channel();
-                                        let dir = dir.clone();
+                                        let dir = existing.dir.clone();
                                         let dir2 = dir.clone();
                                         std::thread::spawn(move || {
                                             crate::uninstall::run_uninstall(&dir, tx);
@@ -239,6 +240,19 @@ fn draw_header(ui: &mut egui::Ui) {
         "installer",
         egui::FontId::proportional(13.0),
         egui::Color32::from_gray(85),
+    );
+
+    let ver_text = format!(
+        "kadr v{}   installer v{}",
+        env!("KADR_VERSION"),
+        env!("CARGO_PKG_VERSION"),
+    );
+    p.text(
+        rect.right_center() - egui::vec2(18.0, 0.0),
+        egui::Align2::RIGHT_CENTER,
+        &ver_text,
+        egui::FontId::monospace(10.5),
+        egui::Color32::from_gray(60),
     );
 
     p.hline(

@@ -1,6 +1,8 @@
-use std::path::PathBuf;
+use std::path::Path;
 
 use egui::{Color32, RichText, Stroke, Ui};
+
+const PATCH_NOTES: &str = include_str!("../../patchnotes.txt");
 
 pub enum WelcomeAction {
     Install,
@@ -8,43 +10,65 @@ pub enum WelcomeAction {
     Remove,
 }
 
-pub fn show(ui: &mut Ui, existing: Option<&PathBuf>) -> Option<WelcomeAction> {
+pub fn show(
+    ui: &mut Ui,
+    existing_dir: Option<&Path>,
+    installed_version: Option<&str>,
+) -> Option<WelcomeAction> {
     let mut action = None;
 
-    ui.add_space(20.0);
+    ui.add_space(16.0);
 
     ui.vertical_centered(|ui| {
         ui.label(
             RichText::new("Kadr Image Viewer")
-                .size(26.0)
+                .size(24.0)
                 .color(Color32::from_gray(225))
                 .strong(),
         );
         ui.add_space(6.0);
 
-        if let Some(dir) = existing {
+        if let Some(dir) = existing_dir {
+            // Version comparison row
+            let installed_str = installed_version.unwrap_or("unknown");
+            let this_str = env!("KADR_VERSION");
             ui.label(
-                RichText::new(format!("Installed at  {}", dir.display()))
-                    .size(11.5)
-                    .color(Color32::from_gray(85))
+                RichText::new(format!(
+                    "Installed: v{}    →    This installer: v{}",
+                    installed_str, this_str
+                ))
+                .size(11.5)
+                .color(Color32::from_gray(90))
+                .monospace(),
+            );
+            ui.add_space(2.0);
+            ui.label(
+                RichText::new(format!("{}", dir.display()))
+                    .size(10.5)
+                    .color(Color32::from_gray(58))
                     .monospace(),
             );
         } else {
             ui.label(
-                RichText::new("Fast, minimal image viewer for Windows")
+                RichText::new(format!("v{}  ·  Fast, minimal image viewer", env!("KADR_VERSION")))
                     .size(13.0)
-                    .color(Color32::from_gray(110)),
+                    .color(Color32::from_gray(100)),
             );
         }
     });
 
-    ui.add_space(28.0);
+    ui.add_space(14.0);
 
+    // ── Patch notes ───────────────────────────────────────────────────────────
+    draw_patch_notes(ui);
+
+    ui.add_space(18.0);
+
+    // ── Buttons ───────────────────────────────────────────────────────────────
     let btn_w = 400.0;
     let left_pad = (ui.available_width() - btn_w) / 2.0;
 
-    if existing.is_some() {
-        // Update — primary action when already installed
+    if existing_dir.is_some() {
         ui.horizontal(|ui| {
             ui.add_space(left_pad);
             if action_row(
@@ -57,9 +81,7 @@ pub fn show(ui: &mut Ui, existing: Option<&PathBuf>) -> Option<WelcomeAction> {
                 action = Some(WelcomeAction::Update);
             }
         });
-        ui.add_space(8.0);
-
-        // Install — reinstall / change options
+        ui.add_space(7.0);
         ui.horizontal(|ui| {
             ui.add_space(left_pad);
             if action_row(
@@ -72,9 +94,7 @@ pub fn show(ui: &mut Ui, existing: Option<&PathBuf>) -> Option<WelcomeAction> {
                 action = Some(WelcomeAction::Install);
             }
         });
-        ui.add_space(8.0);
-
-        // Remove — destructive, subtle
+        ui.add_space(7.0);
         ui.horizontal(|ui| {
             ui.add_space(left_pad);
             if action_row(
@@ -88,7 +108,6 @@ pub fn show(ui: &mut Ui, existing: Option<&PathBuf>) -> Option<WelcomeAction> {
             }
         });
     } else {
-        // Fresh install — single prominent button
         ui.horizontal(|ui| {
             ui.add_space(left_pad);
             if action_row(
@@ -106,6 +125,60 @@ pub fn show(ui: &mut Ui, existing: Option<&PathBuf>) -> Option<WelcomeAction> {
     action
 }
 
+fn draw_patch_notes(ui: &mut Ui) {
+    let width = 400.0;
+    let left_pad = (ui.available_width() - width) / 2.0;
+
+    ui.horizontal(|ui| {
+        ui.add_space(left_pad);
+        ui.vertical(|ui| {
+            ui.set_width(width);
+
+            ui.label(
+                RichText::new(format!("What's new in v{}", env!("KADR_VERSION")))
+                    .size(11.0)
+                    .color(Color32::from_gray(75)),
+            );
+            ui.add_space(4.0);
+
+            let notes_rect = ui.available_rect_before_wrap();
+            let line_count = PATCH_NOTES.lines().filter(|l| !l.trim().is_empty()).count();
+            let box_h = (line_count as f32 * 18.0 + 14.0).max(40.0);
+            let (box_rect, _) = ui.allocate_exact_size(
+                egui::vec2(width, box_h),
+                egui::Sense::hover(),
+            );
+            let _ = notes_rect;
+
+            ui.painter().rect_filled(
+                box_rect,
+                4.0,
+                Color32::from_rgba_premultiplied(255, 255, 255, 5),
+            );
+            ui.painter().rect_stroke(
+                box_rect,
+                4.0,
+                egui::Stroke::new(1.0, Color32::from_rgba_premultiplied(255, 255, 255, 12)),
+                egui::StrokeKind::Inside,
+            );
+
+            let mut y = box_rect.min.y + 7.0;
+            for line in PATCH_NOTES.lines() {
+                let trimmed = line.trim();
+                if trimmed.is_empty() { continue; }
+                ui.painter().text(
+                    egui::pos2(box_rect.min.x + 12.0, y),
+                    egui::Align2::LEFT_TOP,
+                    trimmed,
+                    egui::FontId::proportional(12.0),
+                    Color32::from_gray(140),
+                );
+                y += 18.0;
+            }
+        });
+    });
+}
+
 fn action_row(
     ui: &mut Ui,
     width: f32,
@@ -114,11 +187,10 @@ fn action_row(
     accent: Color32,
     bg: Color32,
 ) -> bool {
-    let height = 64.0;
+    let height = 58.0;
     let (rect, response) = ui.allocate_exact_size(egui::vec2(width, height), egui::Sense::click());
 
     let fill = if response.hovered() {
-        // brighten slightly on hover
         egui::Color32::from_rgba_premultiplied(
             bg.r().saturating_add(15),
             bg.g().saturating_add(15),
@@ -134,24 +206,23 @@ fn action_row(
 
     ui.painter().rect(rect, 6.0, fill, Stroke::new(1.0, stroke_color), egui::StrokeKind::Outside);
 
-    // Accent left bar
     let bar = egui::Rect::from_min_size(rect.min, egui::vec2(3.0, height));
     ui.painter().rect_filled(bar, egui::epaint::CornerRadiusF32 { nw: 6.0, sw: 6.0, ne: 0.0, se: 0.0 }, accent);
 
     let text_x = rect.min.x + 20.0;
     ui.painter().text(
-        egui::pos2(text_x, rect.min.y + 16.0),
+        egui::pos2(text_x, rect.min.y + 13.0),
         egui::Align2::LEFT_TOP,
         title,
-        egui::FontId::proportional(15.0),
+        egui::FontId::proportional(14.0),
         Color32::from_gray(220),
     );
     ui.painter().text(
-        egui::pos2(text_x, rect.min.y + 36.0),
+        egui::pos2(text_x, rect.min.y + 32.0),
         egui::Align2::LEFT_TOP,
         subtitle,
-        egui::FontId::proportional(12.0),
-        Color32::from_gray(105),
+        egui::FontId::proportional(11.5),
+        Color32::from_gray(100),
     );
 
     response.clicked()

@@ -5,10 +5,16 @@ use std::{
 
 use anyhow::{Context, Result};
 
-// Binaries embedded at compile time.
-// Set KADR_EXE_PATH and MPV_DLL_PATH env vars before building the installer.
 static KADR_EXE: &[u8] = include_bytes!(concat!(env!("KADR_EXE_PATH")));
 static MPV_DLL: &[u8]  = include_bytes!(concat!(env!("MPV_DLL_PATH")));
+
+const BUNDLED_KADR_VERSION: &str = env!("KADR_VERSION");
+const KADR_REG_KEY: &str = r"Software\Kadr";
+
+pub struct ExistingInstall {
+    pub dir: PathBuf,
+    pub version: Option<String>,
+}
 
 #[derive(Clone)]
 pub struct InstallOptions {
@@ -43,11 +49,26 @@ pub enum InstallProgress {
     Error(String),
 }
 
-pub fn detect_existing_install() -> Option<PathBuf> {
+pub fn detect_existing_install() -> Option<ExistingInstall> {
+    use winreg::{enums::*, RegKey};
+    let hkcu = RegKey::predef(HKEY_CURRENT_USER);
+
+    // Registry is the primary source — handles custom install dirs.
+    if let Ok(key) = hkcu.open_subkey(KADR_REG_KEY) {
+        if let Ok(path_str) = key.get_value::<String, _>("InstallPath") {
+            let dir = PathBuf::from(&path_str);
+            if dir.join("kadr.exe").exists() {
+                let version = key.get_value::<String, _>("InstalledVersion").ok();
+                return Some(ExistingInstall { dir, version });
+            }
+        }
+    }
+
+    // Fall back to default location for pre-registry installs.
     let local_app_data = std::env::var("LOCALAPPDATA").ok()?;
     let dir = PathBuf::from(local_app_data).join("kadr");
     if dir.join("kadr.exe").exists() {
-        Some(dir)
+        Some(ExistingInstall { dir, version: None })
     } else {
         None
     }
@@ -79,6 +100,9 @@ pub fn run_update(install_dir: &std::path::Path, tx: mpsc::Sender<InstallProgres
         return;
     }
     let _ = tx.send(InstallProgress::Log(format!("Updated {}", dll_path.display())));
+    let _ = tx.send(InstallProgress::Step(0.9));
+
+    let _ = write_install_registry(install_dir);
     let _ = tx.send(InstallProgress::Step(1.0));
     let _ = tx.send(InstallProgress::Log("Done!".to_owned()));
     let _ = tx.send(InstallProgress::Done);
@@ -156,6 +180,7 @@ fn do_install(opts: &InstallOptions, tx: &mpsc::Sender<InstallProgress>) -> Resu
         set_default_video_viewer(&exe_path)?;
     }
     register_uninstall_entry(&exe_path, &opts.install_dir)?;
+    write_install_registry(&opts.install_dir)?;
     step += 1.0; send_step(step, tx);
 
     send_log("Done!", tx);
@@ -302,12 +327,24 @@ fn register_uninstall_entry(exe: &Path, install_dir: &Path) -> Result<()> {
         r"Software\Microsoft\Windows\CurrentVersion\Uninstall\kadr";
     let (key, _) = hkcu.create_subkey(key_path).context("Cannot create uninstall key")?;
     key.set_value("DisplayName", &"Kadr Image Viewer".to_owned())?;
+    key.set_value("DisplayVersion", &BUNDLED_KADR_VERSION.to_owned())?;
     key.set_value("UninstallString", &format!("\"{}\" --uninstall", exe.display()))?;
     key.set_value("InstallLocation", &install_dir.to_string_lossy().to_string())?;
     key.set_value("DisplayIcon", &format!("\"{}\",0", exe.display()))?;
     key.set_value("Publisher", &"".to_owned())?;
     key.set_value("NoModify", &1u32)?;
     key.set_value("NoRepair", &1u32)?;
+    Ok(())
+}
+
+// ── Registry ─────────────────────────────────────────────────────────────────
+
+fn write_install_registry(install_dir: &Path) -> Result<()> {
+    use winreg::{enums::*, RegKey};
+    let hkcu = RegKey::predef(HKEY_CURRENT_USER);
+    let (key, _) = hkcu.create_subkey(KADR_REG_KEY).context("Cannot create Kadr registry key")?;
+    key.set_value("InstallPath", &install_dir.to_string_lossy().to_string())?;
+    key.set_value("InstalledVersion", &BUNDLED_KADR_VERSION.to_owned())?;
     Ok(())
 }
 
