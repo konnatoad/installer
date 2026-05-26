@@ -5,9 +5,10 @@ use std::{
 
 use anyhow::{Context, Result};
 
-// The kadr.exe binary is embedded at compile time.
-// Set KADR_EXE_PATH env var to point at the release build before building installer.
+// Binaries embedded at compile time.
+// Set KADR_EXE_PATH and MPV_DLL_PATH env vars before building the installer.
 static KADR_EXE: &[u8] = include_bytes!(concat!(env!("KADR_EXE_PATH")));
+static MPV_DLL: &[u8]  = include_bytes!(concat!(env!("MPV_DLL_PATH")));
 
 #[derive(Clone)]
 pub struct InstallOptions {
@@ -62,24 +63,29 @@ pub fn run_install(opts: &InstallOptions, tx: mpsc::Sender<InstallProgress>) {
 
 pub fn run_update(install_dir: &std::path::Path, tx: mpsc::Sender<InstallProgress>) {
     let _ = tx.send(InstallProgress::Log("Updating kadr…".to_owned()));
-    let _ = tx.send(InstallProgress::Step(0.2));
+    let _ = tx.send(InstallProgress::Step(0.1));
 
     let exe_path = install_dir.join("kadr.exe");
-    match std::fs::write(&exe_path, KADR_EXE) {
-        Ok(_) => {
-            let _ = tx.send(InstallProgress::Log(format!("Updated {}", exe_path.display())));
-            let _ = tx.send(InstallProgress::Step(1.0));
-            let _ = tx.send(InstallProgress::Log("Done!".to_owned()));
-            let _ = tx.send(InstallProgress::Done);
-        }
-        Err(e) => {
-            let _ = tx.send(InstallProgress::Error(format!("Cannot write {}: {e}", exe_path.display())));
-        }
+    if let Err(e) = std::fs::write(&exe_path, KADR_EXE) {
+        let _ = tx.send(InstallProgress::Error(format!("Cannot write {}: {e}", exe_path.display())));
+        return;
     }
+    let _ = tx.send(InstallProgress::Log(format!("Updated {}", exe_path.display())));
+    let _ = tx.send(InstallProgress::Step(0.5));
+
+    let dll_path = install_dir.join("libmpv-2.dll");
+    if let Err(e) = std::fs::write(&dll_path, MPV_DLL) {
+        let _ = tx.send(InstallProgress::Error(format!("Cannot write {}: {e}", dll_path.display())));
+        return;
+    }
+    let _ = tx.send(InstallProgress::Log(format!("Updated {}", dll_path.display())));
+    let _ = tx.send(InstallProgress::Step(1.0));
+    let _ = tx.send(InstallProgress::Log("Done!".to_owned()));
+    let _ = tx.send(InstallProgress::Done);
 }
 
 fn do_install(opts: &InstallOptions, tx: &mpsc::Sender<InstallProgress>) -> Result<()> {
-    let steps: f32 = 7.0;
+    let steps: f32 = 8.0;
     let mut step = 0f32;
 
     let send_log = |msg: &str, tx: &mpsc::Sender<InstallProgress>| {
@@ -102,7 +108,14 @@ fn do_install(opts: &InstallOptions, tx: &mpsc::Sender<InstallProgress>) -> Resu
         .with_context(|| format!("Cannot write {}", exe_path.display()))?;
     step += 1.0; send_step(step, tx);
 
-    // 3. Desktop shortcut
+    // 3. Write libmpv-2.dll (video playback runtime)
+    let dll_path = opts.install_dir.join("libmpv-2.dll");
+    send_log(&format!("Writing {}…", dll_path.display()), tx);
+    std::fs::write(&dll_path, MPV_DLL)
+        .with_context(|| format!("Cannot write {}", dll_path.display()))?;
+    step += 1.0; send_step(step, tx);
+
+    // 4. Desktop shortcut
     if opts.desktop_shortcut {
         send_log("Creating desktop shortcut…", tx);
         let desktop = desktop_dir();
@@ -110,7 +123,7 @@ fn do_install(opts: &InstallOptions, tx: &mpsc::Sender<InstallProgress>) -> Resu
     }
     step += 1.0; send_step(step, tx);
 
-    // 4. Start menu shortcut
+    // 5. Start menu shortcut
     if opts.start_menu_shortcut {
         send_log("Creating Start Menu shortcut…", tx);
         let sm = start_menu_dir();
@@ -119,21 +132,21 @@ fn do_install(opts: &InstallOptions, tx: &mpsc::Sender<InstallProgress>) -> Resu
     }
     step += 1.0; send_step(step, tx);
 
-    // 5. Add to PATH
+    // 6. Add to PATH
     if opts.add_to_path {
         send_log("Adding to user PATH…", tx);
         add_to_user_path(&opts.install_dir)?;
     }
     step += 1.0; send_step(step, tx);
 
-    // 6. Context menu
+    // 7. Context menu
     if opts.context_menu {
         send_log("Registering context menu…", tx);
         register_context_menu(&exe_path)?;
     }
     step += 1.0; send_step(step, tx);
 
-    // 7. Default viewers + uninstall registry entry
+    // 8. Default viewers + uninstall registry entry
     if opts.default_image_viewer {
         send_log("Setting default image viewer…", tx);
         set_default_image_viewer(&exe_path)?;
