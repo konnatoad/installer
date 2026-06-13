@@ -5,21 +5,14 @@ use std::sync::{Arc, Mutex};
 
 use crate::{
     install::{InstallOptions, InstallProgress},
-    ui::{done, options, patchnotes, progress, welcome},
+    ui::{done, options, progress, welcome},
 };
 
 pub enum Page {
     Welcome,
-    UpdateChecking(mpsc::Receiver<crate::install::UpdateCheckResult>),
-    PatchNotes(PatchNotesState),
     Options(InstallOptions),
     Progress(ProgressState),
     Done(DoneState),
-}
-
-pub struct PatchNotesState {
-    pub pending: Vec<crate::install::PendingUpdate>,
-    pub kadr_version: Option<String>,
 }
 
 #[derive(Clone, Copy, PartialEq)]
@@ -51,10 +44,17 @@ pub struct InstallerApp {
     pub existing_install: Option<crate::install::ExistingInstall>,
     pub remote_sizes: Arc<Mutex<Option<HashMap<String, u64>>>>,
     pub remote_kadr_version: Arc<Mutex<Option<String>>>,
+    pub remote_installer_version: Arc<Mutex<Option<String>>>,
+    pub pending_updates: Arc<Mutex<Option<Vec<String>>>>,
+    pub patchnotes_text: Arc<Mutex<Option<String>>>,
+    pub selected_panel: Option<welcome::Panel>,
+    pub installer_dl: Arc<Mutex<welcome::InstallerDlState>>,
 }
 
 impl InstallerApp {
     pub fn new(cc: &eframe::CreationContext<'_>) -> Self {
+        let existing_install = crate::install::detect_existing_install();
+
         let remote_sizes: Arc<Mutex<Option<HashMap<String, u64>>>> = Arc::new(Mutex::new(None));
         let sizes_ref = Arc::clone(&remote_sizes);
         let ctx = cc.egui_ctx.clone();
@@ -74,11 +74,52 @@ impl InstallerApp {
             }
         });
 
+        let remote_installer_version: Arc<Mutex<Option<String>>> = Arc::new(Mutex::new(None));
+        let inst_ver_ref = Arc::clone(&remote_installer_version);
+        let ctx = cc.egui_ctx.clone();
+        std::thread::spawn(move || {
+            if let Some(r) = crate::install::fetch_installer_release_version() {
+                *inst_ver_ref.lock().unwrap() = Some(r);
+                ctx.request_repaint();
+            }
+        });
+
+        let pending_updates: Arc<Mutex<Option<Vec<String>>>> = Arc::new(Mutex::new(None));
+        if let Some(existing) = &existing_install {
+            let dir = existing.dir.clone();
+            let pending_ref = Arc::clone(&pending_updates);
+            let ctx = cc.egui_ctx.clone();
+            std::thread::spawn(move || {
+                let filenames = crate::install::get_pending_filenames(&dir);
+                *pending_ref.lock().unwrap() = Some(filenames);
+                ctx.request_repaint();
+            });
+        }
+
+        let patchnotes_text: Arc<Mutex<Option<String>>> = Arc::new(Mutex::new(None));
+        let notes_ref = Arc::clone(&patchnotes_text);
+        let ctx = cc.egui_ctx.clone();
+        std::thread::spawn(move || {
+            let text = ureq::get("https://bomzh.fm/raw/patchnotes")
+                .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36")
+                .call()
+                .ok()
+                .and_then(|r| r.into_body().read_to_string().ok())
+                .unwrap_or_else(|| "• Could not load patch notes".to_owned());
+            *notes_ref.lock().unwrap() = Some(text);
+            ctx.request_repaint();
+        });
+
         Self {
             page: Page::Welcome,
-            existing_install: crate::install::detect_existing_install(),
+            existing_install,
             remote_sizes,
             remote_kadr_version,
+            remote_installer_version,
+            pending_updates,
+            patchnotes_text,
+            selected_panel: None,
+            installer_dl: Arc::new(Mutex::new(welcome::InstallerDlState::Idle)),
         }
     }
 }
@@ -100,89 +141,19 @@ impl eframe::App for InstallerApp {
                     Page::Welcome => {
                         let existing_dir = self.existing_install.as_ref().map(|e| e.dir.as_path());
                         let installed_ver = self.existing_install.as_ref().and_then(|e| e.version.as_deref());
-                        let remote_ver = self.remote_kadr_version.lock().unwrap().clone();
-                        let remote = self.remote_sizes.lock().unwrap().clone();
-                        let total_size = remote.as_ref().map(|m| m.values().sum::<u64>());
-                        if let Some(action) = welcome::show(ui, existing_dir, installed_ver, remote_ver.as_deref(), total_size) {
-                            match action {
-                                welcome::WelcomeAction::Install => {
-                                    self.page = Page::Options(InstallOptions::default());
-                                }
-                                welcome::WelcomeAction::Update => {
-                                    let (tx, rx) = mpsc::channel();
-                                    if let Some(existing) = &self.existing_install {
-                                        let dir = existing.dir.clone();
-                                        let ctx = ctx.clone();
-                                        std::thread::spawn(move || {
-                                            let result = crate::install::get_pending_updates(&dir);
-                                            let _ = tx.send(result);
-                                            ctx.request_repaint();
-                                        });
-                                    } else {
-                                        let _ = tx.send(crate::install::UpdateCheckResult { pending: vec![], kadr_version: None });
-                                    }
-                                    self.page = Page::UpdateChecking(rx);
-                                }
-                                welcome::WelcomeAction::Remove => {
-                                    if let Some(existing) = &self.existing_install {
-                                        let (tx, rx) = mpsc::channel();
-                                        let dir = existing.dir.clone();
-                                        let dir2 = dir.clone();
-                                        std::thread::spawn(move || {
-                                            crate::uninstall::run_uninstall(&dir, tx);
-                                        });
-                                        let mut opts = InstallOptions::default();
-                                        opts.install_dir = dir2;
-                                        self.page = Page::Progress(ProgressState {
-                                            rx,
-                                            log: Vec::new(),
-                                            fraction: 0.0,
-                                            finished: false,
-                                            error: None,
-                                            options: opts,
-                                            operation: Operation::Uninstall,
-                                        });
-                                    }
-                                }
-                            }
-                        }
-                    }
+                        let notes = self.patchnotes_text.lock().unwrap().clone();
+                        let remote_inst_ver = self.remote_installer_version.lock().unwrap().clone();
+                        let pending = self.pending_updates.lock().unwrap().clone();
+                        let total_size = self.remote_sizes.lock().unwrap().as_ref().map(|m| m.values().sum::<u64>());
+                        let installer_dl = self.installer_dl.lock().unwrap().clone();
 
-                    Page::UpdateChecking(rx) => {
-                        if let Ok(result) = rx.try_recv() {
-                            self.page = Page::PatchNotes(PatchNotesState {
-                                pending: result.pending,
-                                kadr_version: result.kadr_version,
-                            });
-                        } else {
-                            ui.centered_and_justified(|ui| {
-                                ui.label("Checking for updates…");
-                            });
-                            ctx.request_repaint_after(std::time::Duration::from_millis(50));
-                        }
-                    }
-
-                    Page::PatchNotes(state) => {
-                        let all_up_to_date = state.pending.is_empty();
-                        let remote = self.remote_sizes.lock().unwrap().clone();
-                        let size_delta = remote.as_ref().map(|remote_map| {
-                            let install_dir = self.existing_install.as_ref().map(|e| e.dir.as_path());
-                            state.pending.iter().map(|update| {
-                                let filename = crate::install::filename_from_url(update.entry.url);
-                                let remote_size = remote_map.get(filename).copied().unwrap_or(0) as i64;
-                                let local_size = install_dir
-                                    .and_then(|d| std::fs::metadata(d.join(filename)).ok())
-                                    .map(|m| m.len() as i64)
-                                    .unwrap_or(0);
-                                remote_size - local_size
-                            }).sum::<i64>()
-                        });
-                        if let Some(action) = patchnotes::show(ui, size_delta, all_up_to_date, state.kadr_version.as_deref()) {
+                        if let Some(action) = welcome::show(
+                            ui, existing_dir, installed_ver, total_size,
+                            notes.as_deref(), remote_inst_ver.as_deref(),
+                            pending.as_deref(), &mut self.selected_panel, &installer_dl,
+                        ) {
                             match action {
-                                patchnotes::PatchNotesAction::Back => {
-                                    self.page = Page::Welcome;
-                                }
-                                patchnotes::PatchNotesAction::Confirm => {
+                                welcome::WelcomeAction::RunUpdate => {
                                     if let Some(existing) = &self.existing_install {
                                         let (tx, rx) = mpsc::channel();
                                         let dir = existing.dir.clone();
@@ -193,17 +164,54 @@ impl eframe::App for InstallerApp {
                                         let mut opts = InstallOptions::default();
                                         opts.install_dir = dir2;
                                         self.page = Page::Progress(ProgressState {
-                                            rx,
-                                            log: Vec::new(),
-                                            fraction: 0.0,
-                                            finished: false,
-                                            error: None,
-                                            options: opts,
-                                            operation: Operation::Update,
+                                            rx, log: Vec::new(), fraction: 0.0,
+                                            finished: false, error: None,
+                                            options: opts, operation: Operation::Update,
+                                        });
+                                    }
+                                }
+                                welcome::WelcomeAction::DownloadInstaller => {
+                                    let dl_ref = Arc::clone(&self.installer_dl);
+                                    let ctx = ctx.clone();
+                                    std::thread::spawn(move || {
+                                        *dl_ref.lock().unwrap() = welcome::InstallerDlState::Downloading;
+                                        ctx.request_repaint();
+                                        match crate::install::download_installer_to_downloads() {
+                                            Ok(path) => *dl_ref.lock().unwrap() = welcome::InstallerDlState::Done(path),
+                                            Err(e)   => *dl_ref.lock().unwrap() = welcome::InstallerDlState::Error(e.to_string()),
+                                        }
+                                        ctx.request_repaint();
+                                    });
+                                }
+                                welcome::WelcomeAction::LaunchInstallerAndExit(path) => {
+                                    let _ = std::process::Command::new(&path).spawn();
+                                    std::process::exit(0);
+                                }
+                                welcome::WelcomeAction::GoInstall => {
+                                    self.page = Page::Options(InstallOptions::default());
+                                }
+                                welcome::WelcomeAction::GoUninstall => {
+                                    if let Some(existing) = &self.existing_install {
+                                        let (tx, rx) = mpsc::channel();
+                                        let dir = existing.dir.clone();
+                                        let dir2 = dir.clone();
+                                        std::thread::spawn(move || {
+                                            crate::uninstall::run_uninstall(&dir, tx);
+                                        });
+                                        let mut opts = InstallOptions::default();
+                                        opts.install_dir = dir2;
+                                        self.page = Page::Progress(ProgressState {
+                                            rx, log: Vec::new(), fraction: 0.0,
+                                            finished: false, error: None,
+                                            options: opts, operation: Operation::Uninstall,
                                         });
                                     }
                                 }
                             }
+                        }
+
+                        if matches!(*self.installer_dl.lock().unwrap(), welcome::InstallerDlState::Downloading) {
+                            ctx.request_repaint_after(std::time::Duration::from_millis(100));
                         }
                     }
 
@@ -220,13 +228,9 @@ impl eframe::App for InstallerApp {
                                         crate::install::run_install(&opts_clone, tx);
                                     });
                                     self.page = Page::Progress(ProgressState {
-                                        rx,
-                                        log: Vec::new(),
-                                        fraction: 0.0,
-                                        finished: false,
-                                        error: None,
-                                        options: opts,
-                                        operation: Operation::Install,
+                                        rx, log: Vec::new(), fraction: 0.0,
+                                        finished: false, error: None,
+                                        options: opts, operation: Operation::Install,
                                     });
                                 }
                             }
@@ -238,14 +242,8 @@ impl eframe::App for InstallerApp {
                             match msg {
                                 InstallProgress::Log(s) => state.log.push(s),
                                 InstallProgress::Step(f) => state.fraction = f,
-                                InstallProgress::Done => {
-                                    state.fraction = 1.0;
-                                    state.finished = true;
-                                }
-                                InstallProgress::Error(e) => {
-                                    state.error = Some(e);
-                                    state.finished = true;
-                                }
+                                InstallProgress::Done => { state.fraction = 1.0; state.finished = true; }
+                                InstallProgress::Error(e) => { state.error = Some(e); state.finished = true; }
                             }
                         }
 
@@ -261,8 +259,8 @@ impl eframe::App for InstallerApp {
                                     let success = state.error.is_none();
                                     let msg = if success {
                                         match state.operation {
-                                            Operation::Install => "Kadr was installed successfully!".to_owned(),
-                                            Operation::Update  => "Kadr was updated successfully!".to_owned(),
+                                            Operation::Install   => "Kadr was installed successfully!".to_owned(),
+                                            Operation::Update    => "Kadr was updated successfully!".to_owned(),
                                             Operation::Uninstall => "Kadr was uninstalled successfully.".to_owned(),
                                         }
                                     } else {
@@ -279,12 +277,7 @@ impl eframe::App for InstallerApp {
                                     if op == Operation::Uninstall && success {
                                         self.existing_install = None;
                                     }
-                                    self.page = Page::Done(DoneState {
-                                        success,
-                                        message: msg,
-                                        install_dir: dir,
-                                        operation: op,
-                                    });
+                                    self.page = Page::Done(DoneState { success, message: msg, install_dir: dir, operation: op });
                                 }
                             }
                         }
@@ -298,9 +291,7 @@ impl eframe::App for InstallerApp {
                                     let _ = std::process::Command::new(exe).spawn();
                                     std::process::exit(0);
                                 }
-                                done::DoneAction::Close => {
-                                    std::process::exit(0);
-                                }
+                                done::DoneAction::Close => std::process::exit(0),
                             }
                         }
                     }
@@ -316,40 +307,17 @@ fn draw_header(ui: &mut egui::Ui, kadr_version: Option<&str>) {
     let p = ui.painter();
 
     p.rect_filled(rect, 0.0, egui::Color32::from_rgb(15, 13, 22));
+    p.text(rect.min + egui::vec2(24.0, 12.0), egui::Align2::LEFT_TOP,
+        "kadr", egui::FontId::proportional(22.0), egui::Color32::from_rgb(99, 155, 255));
+    p.text(rect.min + egui::vec2(74.0, 17.0), egui::Align2::LEFT_TOP,
+        "installer", egui::FontId::proportional(13.0), egui::Color32::from_gray(85));
 
-    p.text(
-        rect.min + egui::vec2(24.0, 12.0),
-        egui::Align2::LEFT_TOP,
-        "kadr",
-        egui::FontId::proportional(22.0),
-        egui::Color32::from_rgb(99, 155, 255),
-    );
-    p.text(
-        rect.min + egui::vec2(74.0, 17.0),
-        egui::Align2::LEFT_TOP,
-        "installer",
-        egui::FontId::proportional(13.0),
-        egui::Color32::from_gray(85),
-    );
+    let ver_text = format!("kadr v{}   installer v{}", kadr_version.unwrap_or("…"), env!("CARGO_PKG_VERSION"));
+    p.text(rect.right_center() - egui::vec2(18.0, 0.0), egui::Align2::RIGHT_CENTER,
+        &ver_text, egui::FontId::monospace(10.5), egui::Color32::from_gray(80));
 
-    let ver_text = format!(
-        "kadr v{}   installer v{}",
-        kadr_version.unwrap_or("…"),
-        env!("CARGO_PKG_VERSION"),
-    );
-    p.text(
-        rect.right_center() - egui::vec2(18.0, 0.0),
-        egui::Align2::RIGHT_CENTER,
-        &ver_text,
-        egui::FontId::monospace(10.5),
-        egui::Color32::from_gray(80),
-    );
-
-    p.hline(
-        rect.left()..=rect.right(),
-        rect.bottom(),
-        egui::Stroke::new(1.0, egui::Color32::from_rgba_premultiplied(99, 155, 255, 50)),
-    );
+    p.hline(rect.left()..=rect.right(), rect.bottom(),
+        egui::Stroke::new(1.0, egui::Color32::from_rgba_premultiplied(99, 155, 255, 50)));
 }
 
 fn apply_theme(ctx: &egui::Context) {
@@ -362,7 +330,6 @@ fn apply_theme(ctx: &egui::Context) {
     style.visuals.widgets.hovered.bg_fill = egui::Color32::from_rgb(30, 27, 42);
     style.visuals.widgets.active.bg_fill = egui::Color32::from_rgb(40, 36, 58);
     style.visuals.override_text_color = Some(egui::Color32::from_gray(210));
-    style.visuals.widgets.noninteractive.bg_stroke =
-        egui::Stroke::new(1.0, egui::Color32::from_gray(35));
+    style.visuals.widgets.noninteractive.bg_stroke = egui::Stroke::new(1.0, egui::Color32::from_gray(35));
     ctx.set_global_style(style);
 }
