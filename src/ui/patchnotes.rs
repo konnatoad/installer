@@ -1,13 +1,11 @@
 use egui::{Color32, RichText, Stroke, Ui};
 
-const PATCH_NOTES: &str = include_str!("../../patchnotes.txt");
-
 pub enum PatchNotesAction {
     Confirm,
     Back,
 }
 
-pub fn show(ui: &mut Ui, size_delta: Option<i64>, all_up_to_date: bool, kadr_version: Option<&str>) -> Option<PatchNotesAction> {
+pub fn show(ui: &mut Ui, size_delta: Option<i64>, all_up_to_date: bool, kadr_version: Option<&str>, _patchnotes: Option<&str>) -> Option<PatchNotesAction> {
     let mut action = None;
 
     ui.add_space(16.0);
@@ -17,7 +15,7 @@ pub fn show(ui: &mut Ui, size_delta: Option<i64>, all_up_to_date: bool, kadr_ver
         let title = if all_up_to_date {
             format!("kadr v{ver} — Already up to date")
         } else {
-            format!("What's new in v{ver}")
+            format!("Update to v{ver}")
         };
         ui.label(
             RichText::new(title)
@@ -28,7 +26,7 @@ pub fn show(ui: &mut Ui, size_delta: Option<i64>, all_up_to_date: bool, kadr_ver
         if !all_up_to_date {
             ui.add_space(4.0);
             let delta_str = match size_delta {
-                Some(d) if d > 0  => format!("Installation size change: {}", fmt_delta(d as u64)),
+                Some(d) if d > 0  => format!("Installation size change: +{}", fmt_delta(d as u64)),
                 Some(d) if d < 0  => format!("Installation size change: -{}", fmt_delta(d.unsigned_abs())),
                 Some(_)            => "Installation size unchanged".to_owned(),
                 None               => "Calculating size…".to_owned(),
@@ -41,46 +39,7 @@ pub fn show(ui: &mut Ui, size_delta: Option<i64>, all_up_to_date: bool, kadr_ver
         }
     });
 
-    ui.add_space(14.0);
-
-    let width = 400.0;
-    let left_pad = (ui.available_width() - width) / 2.0;
-
-    if !all_up_to_date {
-        ui.horizontal(|ui| {
-            ui.add_space(left_pad);
-            ui.vertical(|ui| {
-                ui.set_width(width);
-
-                let line_count = PATCH_NOTES.lines().filter(|l| !l.trim().is_empty()).count();
-                let box_h = (line_count as f32 * 18.0 + 14.0).max(40.0);
-                let (box_rect, _) = ui.allocate_exact_size(egui::vec2(width, box_h), egui::Sense::hover());
-
-                ui.painter().rect_filled(box_rect, 4.0, Color32::from_rgb(18, 16, 26));
-                ui.painter().rect_stroke(
-                    box_rect,
-                    4.0,
-                    Stroke::new(1.0, Color32::from_rgb(45, 38, 65)),
-                    egui::StrokeKind::Inside,
-                );
-
-                let mut y = box_rect.min.y + 7.0;
-                for line in PATCH_NOTES.lines() {
-                    let trimmed = line.trim();
-                    if trimmed.is_empty() { continue; }
-                    ui.painter().text(
-                        egui::pos2(box_rect.min.x + 12.0, y),
-                        egui::Align2::LEFT_TOP,
-                        trimmed,
-                        egui::FontId::proportional(12.0),
-                        Color32::from_gray(140),
-                    );
-                    y += 18.0;
-                }
-            });
-        });
-        ui.add_space(18.0);
-    }
+    ui.add_space(24.0);
 
     let btn_w = 400.0;
     let left_pad = (ui.available_width() - btn_w) / 2.0;
