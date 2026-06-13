@@ -38,6 +38,10 @@ pub fn fetch_release_version() -> Option<String> {
     fetch_release("kadr")?.version
 }
 
+pub fn fetch_installer_release_version() -> Option<String> {
+    fetch_release("Installer")?.version
+}
+
 struct ReleaseInfo {
     version: Option<String>,
     asset_timestamps: HashMap<String, String>,
@@ -51,7 +55,8 @@ fn fetch_release(tag: &str) -> Option<ReleaseInfo> {
     let text = resp.into_body().read_to_string().ok()?;
     let body: serde_json::Value = serde_json::from_str(&text).ok()?;
     let version = body["name"].as_str()
-        .map(|s| s.trim_start_matches(|c| c == 'v' || c == 'V').to_owned());
+        .map(|s| s.trim_start_matches(|c| c == 'v' || c == 'V').to_owned())
+        .filter(|s| s.contains('.'));
     let asset_timestamps = body["assets"].as_array()
         .map(|arr| arr.iter().filter_map(|a| {
             let name = a["name"].as_str()?.to_owned();
@@ -83,6 +88,34 @@ pub struct PendingUpdate {
 pub struct UpdateCheckResult {
     pub pending: Vec<PendingUpdate>,
     pub kadr_version: Option<String>,
+}
+
+pub fn get_pending_filenames(install_dir: &Path) -> Vec<String> {
+    get_pending_updates(install_dir).pending
+        .into_iter()
+        .map(|u| filename_from_url(u.entry.url).to_owned())
+        .collect()
+}
+
+const INSTALLER_URL: &str =
+    "https://github.com/konnatoad/installer/releases/download/Installer/installer.exe";
+
+pub fn download_installer_to_downloads() -> Result<std::path::PathBuf> {
+    let downloads = std::env::var("USERPROFILE")
+        .map(|h| std::path::PathBuf::from(h).join("Downloads"))
+        .unwrap_or_else(|_| std::env::temp_dir());
+    let dest = downloads.join("kadr-installer.exe");
+    let resp = ureq::get(INSTALLER_URL)
+        .header("User-Agent", "kadr-installer")
+        .call()
+        .context("Failed to download installer")?;
+    let mut reader = resp.into_body().into_reader();
+    let mut data = Vec::new();
+    std::io::copy(&mut reader, &mut data)
+        .context("Failed to read installer data")?;
+    std::fs::write(&dest, &data)
+        .context("Failed to write installer to Downloads")?;
+    Ok(dest)
 }
 
 pub fn get_pending_updates(install_dir: &Path) -> UpdateCheckResult {
