@@ -15,7 +15,10 @@ GUI installer for kadr built with Rust and egui. Downloads `kadr.exe` and `libmp
 - Registers "Open with Kadr" right-click context menu entries for files, folders, and folder backgrounds (optional)
 - Sets kadr as the default image / video viewer (optional)
 - Writes an uninstall entry to `HKCU\Software\Microsoft\Windows\CurrentVersion\Uninstall\kadr`
-- **Update** — re-downloads and replaces `kadr.exe` in-place, keeping all existing settings
+- Records the install path and version in `HKCU\Software\Kadr` for update tracking
+- **Update** — compares GitHub release asset timestamps to detect changed files and re-downloads only what is outdated, keeping all existing settings
+- **Self-update** — if a newer installer version is available it can download the updated `installer.exe` to Downloads and launch it
+- **Patch notes** — the welcome screen fetches and displays release notes
 - **Uninstall** — removes shortcuts, PATH entry, context menu entries, and schedules directory deletion
 
 ## Building
