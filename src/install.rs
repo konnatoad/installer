@@ -9,25 +9,27 @@ use anyhow::{Context, Result};
 
 // ── Download config ───────────────────────────────────────────────────────────
 
-#[derive(Clone)]
+#[derive(Clone, serde::Deserialize)]
 pub struct DownloadEntry {
-    pub url: &'static str,
-    pub release_tag: &'static str,
+    pub url: String,
+    pub release_tag: String,
 }
 
-const DOWNLOADS: &[DownloadEntry] = &[
-    DownloadEntry {
-        url: "https://github.com/konnatoad/installer/releases/download/kadr/kadr.exe",
-        release_tag: "kadr",
-    },
-    DownloadEntry {
-        url: "https://github.com/konnatoad/installer/releases/download/libmpv-2/libmpv-2.dll",
-        release_tag: "libmpv-2",
-    },
-];
+const DOWNLOADS_URL: &str = "https://bomzh.fm/raw/downloads";
 
 pub fn load_config() -> Vec<DownloadEntry> {
-    DOWNLOADS.to_vec()
+    let resp = ureq::get(DOWNLOADS_URL)
+        .header("User-Agent", "kadr-installer")
+        .call()
+        .ok();
+    if let Some(resp) = resp {
+        if let Ok(text) = resp.into_body().read_to_string() {
+            if let Ok(entries) = serde_json::from_str::<Vec<DownloadEntry>>(&text) {
+                return entries;
+            }
+        }
+    }
+    Vec::new()
 }
 
 pub fn filename_from_url(url: &str) -> &str {
@@ -93,7 +95,7 @@ pub struct UpdateCheckResult {
 pub fn get_pending_filenames(install_dir: &Path) -> Vec<String> {
     get_pending_updates(install_dir).pending
         .into_iter()
-        .map(|u| filename_from_url(u.entry.url).to_owned())
+        .map(|u| filename_from_url(&u.entry.url).to_owned())
         .collect()
 }
 
@@ -123,7 +125,7 @@ pub fn get_pending_updates(install_dir: &Path) -> UpdateCheckResult {
     let mut kadr_version = None;
 
     for entry in load_config() {
-        let filename = filename_from_url(entry.url);
+        let filename = filename_from_url(&entry.url);
         let path = install_dir.join(filename);
 
         if !path.exists() {
@@ -131,7 +133,7 @@ pub fn get_pending_updates(install_dir: &Path) -> UpdateCheckResult {
             continue;
         }
 
-        match fetch_release(entry.release_tag) {
+        match fetch_release(&entry.release_tag) {
             Some(release) => {
                 if entry.release_tag == "kadr" {
                     kadr_version = release.version.clone();
@@ -162,8 +164,8 @@ pub fn get_pending_updates(install_dir: &Path) -> UpdateCheckResult {
 pub fn fetch_remote_sizes() -> HashMap<String, u64> {
     load_config().iter()
         .filter_map(|e| {
-            let name = filename_from_url(e.url).to_owned();
-            let size = head_content_length(e.url)?;
+            let name = filename_from_url(&e.url).to_owned();
+            let size = head_content_length(&e.url)?;
             Some((name, size))
         })
         .collect()
@@ -252,8 +254,8 @@ pub fn run_update(install_dir: &std::path::Path, tx: mpsc::Sender<InstallProgres
     for (i, update) in result.pending.iter().enumerate() {
         let start = i as f32 / n * 0.95;
         let end = (i as f32 + 1.0) / n * 0.95;
-        let filename = filename_from_url(update.entry.url);
-        if let Err(e) = download_file(update.entry.url, &install_dir.join(filename), filename, start, end, &tx) {
+        let filename = filename_from_url(&update.entry.url);
+        if let Err(e) = download_file(&update.entry.url, &install_dir.join(filename), filename, start, end, &tx) {
             let _ = tx.send(InstallProgress::Error(format!("{e:#}")));
             return;
         }
@@ -305,13 +307,13 @@ fn do_install(opts: &InstallOptions, tx: &mpsc::Sender<InstallProgress>) -> Resu
     for (i, entry) in entries.iter().enumerate() {
         let start = (step + i as f32 / n_files) / steps;
         let end = (step + (i as f32 + 1.0) / n_files) / steps;
-        let filename = filename_from_url(entry.url);
+        let filename = filename_from_url(&entry.url);
         let remote_ts = if entry.release_tag == "kadr" {
             kadr_release.as_ref().and_then(|r| r.asset_timestamps.get(filename).cloned())
         } else {
-            fetch_release(entry.release_tag).and_then(|r| r.asset_timestamps.get(filename).cloned())
+            fetch_release(&entry.release_tag).and_then(|r| r.asset_timestamps.get(filename).cloned())
         };
-        download_file(entry.url, &opts.install_dir.join(filename), filename, start, end, tx)?;
+        download_file(&entry.url, &opts.install_dir.join(filename), filename, start, end, tx)?;
         if let Some(ts) = remote_ts {
             store_updated_at(filename, &ts);
         }
