@@ -8,7 +8,11 @@ name = "installer"
 path = "src/main.rs"
 
 [dependencies]
-eframe = { version = "0.34", features = ["default"] }
+eframe = { version = "0.34", default-features = false, features = [
+  "default_fonts",
+  "glow",
+  "persistence",
+] }
 egui = "0.34"
 winreg = "0.56"
 rfd = "0.17"
@@ -19,3 +23,10 @@ serde_json = "1"
 
 [build-dependencies]
 winres = "0.1"
+
+[profile.release]
+opt-level = "z"
+lto = true
+codegen-units = 1
+strip = "symbols"
+panic = "abort"
