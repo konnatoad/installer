@@ -22,12 +22,11 @@ pub fn load_config() -> Vec<DownloadEntry> {
         .header("User-Agent", "kadr-installer")
         .call()
         .ok();
-    if let Some(resp) = resp {
-        if let Ok(text) = resp.into_body().read_to_string() {
-            if let Ok(entries) = serde_json::from_str::<Vec<DownloadEntry>>(&text) {
-                return entries;
-            }
-        }
+    if let Some(resp) = resp
+        && let Ok(text) = resp.into_body().read_to_string()
+        && let Ok(entries) = serde_json::from_str::<Vec<DownloadEntry>>(&text)
+    {
+        return entries;
     }
     Vec::new()
 }
@@ -53,32 +52,45 @@ fn fetch_release(tag: &str) -> Option<ReleaseInfo> {
     let url = format!("https://api.github.com/repos/konnatoad/installer/releases/tags/{tag}");
     let resp = ureq::get(&url)
         .header("User-Agent", "kadr-installer")
-        .call().ok()?;
+        .call()
+        .ok()?;
     let text = resp.into_body().read_to_string().ok()?;
     let body: serde_json::Value = serde_json::from_str(&text).ok()?;
-    let version = body["name"].as_str()
-        .map(|s| s.trim_start_matches(|c| c == 'v' || c == 'V').to_owned())
+    let version = body["name"]
+        .as_str()
+        .map(|s| s.trim_start_matches(['v', 'V']).to_owned())
         .filter(|s| s.contains('.'));
-    let asset_timestamps = body["assets"].as_array()
-        .map(|arr| arr.iter().filter_map(|a| {
-            let name = a["name"].as_str()?.to_owned();
-            let ts = a["updated_at"].as_str()?.to_owned();
-            Some((name, ts))
-        }).collect())
+    let asset_timestamps = body["assets"]
+        .as_array()
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|a| {
+                    let name = a["name"].as_str()?.to_owned();
+                    let ts = a["updated_at"].as_str()?.to_owned();
+                    Some((name, ts))
+                })
+                .collect()
+        })
         .unwrap_or_default();
-    Some(ReleaseInfo { version, asset_timestamps })
+    Some(ReleaseInfo {
+        version,
+        asset_timestamps,
+    })
 }
 
 fn stored_updated_at(filename: &str) -> Option<String> {
-    use winreg::{enums::*, RegKey};
-    let key = RegKey::predef(HKEY_CURRENT_USER).open_subkey(KADR_REG_KEY).ok()?;
-    key.get_value::<String, _>(&format!("UpdatedAt_{filename}")).ok()
+    use winreg::{RegKey, enums::*};
+    let key = RegKey::predef(HKEY_CURRENT_USER)
+        .open_subkey(KADR_REG_KEY)
+        .ok()?;
+    key.get_value::<String, _>(&format!("UpdatedAt_{filename}"))
+        .ok()
 }
 
 fn store_updated_at(filename: &str, updated_at: &str) {
-    use winreg::{enums::*, RegKey};
+    use winreg::{RegKey, enums::*};
     if let Ok((key, _)) = RegKey::predef(HKEY_CURRENT_USER).create_subkey(KADR_REG_KEY) {
-        let _ = key.set_value(&format!("UpdatedAt_{filename}"), &updated_at.to_owned());
+        let _ = key.set_value(format!("UpdatedAt_{filename}"), &updated_at.to_owned());
     }
 }
 
@@ -93,7 +105,8 @@ pub struct UpdateCheckResult {
 }
 
 pub fn get_pending_filenames(install_dir: &Path) -> Vec<String> {
-    get_pending_updates(install_dir).pending
+    get_pending_updates(install_dir)
+        .pending
         .into_iter()
         .map(|u| filename_from_url(&u.entry.url).to_owned())
         .collect()
@@ -113,10 +126,8 @@ pub fn download_installer_to_downloads() -> Result<std::path::PathBuf> {
         .context("Failed to download installer")?;
     let mut reader = resp.into_body().into_reader();
     let mut data = Vec::new();
-    std::io::copy(&mut reader, &mut data)
-        .context("Failed to read installer data")?;
-    std::fs::write(&dest, &data)
-        .context("Failed to write installer to Downloads")?;
+    std::io::copy(&mut reader, &mut data).context("Failed to read installer data")?;
+    std::fs::write(&dest, &data).context("Failed to write installer to Downloads")?;
     Ok(dest)
 }
 
@@ -129,40 +140,47 @@ pub fn get_pending_updates(install_dir: &Path) -> UpdateCheckResult {
         let path = install_dir.join(filename);
 
         if !path.exists() {
-            pending.push(PendingUpdate { entry, updated_at: None });
+            pending.push(PendingUpdate {
+                entry,
+                updated_at: None,
+            });
             continue;
         }
 
-        match fetch_release(&entry.release_tag) {
-            Some(release) => {
-                if entry.release_tag == "kadr" {
-                    kadr_version = release.version.clone();
-                }
-                if let Some(remote_ts) = release.asset_timestamps.get(filename) {
-                    match stored_updated_at(filename) {
-                        Some(stored) if stored == *remote_ts => {
-                            // up to date, nothing to do
-                        }
-                        Some(_) => {
-                            // timestamp differs — needs update
-                            pending.push(PendingUpdate { entry, updated_at: Some(remote_ts.clone()) });
-                        }
-                        None => {
-                            // no stored timestamp — trust the file, just store it
-                            store_updated_at(filename, remote_ts);
-                        }
+        if let Some(release) = fetch_release(&entry.release_tag) {
+            if entry.release_tag == "kadr" {
+                kadr_version = release.version.clone();
+            }
+            if let Some(remote_ts) = release.asset_timestamps.get(filename) {
+                match stored_updated_at(filename) {
+                    Some(stored) if stored == *remote_ts => {
+                        // up to date
+                    }
+                    Some(_) => {
+                        // timestamp differs - needs update
+                        pending.push(PendingUpdate {
+                            entry,
+                            updated_at: Some(remote_ts.clone()),
+                        });
+                    }
+                    None => {
+                        // no stored timestamp, trust the file
+                        store_updated_at(filename, remote_ts);
                     }
                 }
             }
-            None => {} // API failed, file exists, assume up to date
         }
     }
 
-    UpdateCheckResult { pending, kadr_version }
+    UpdateCheckResult {
+        pending,
+        kadr_version,
+    }
 }
 
 pub fn fetch_remote_sizes() -> HashMap<String, u64> {
-    load_config().iter()
+    load_config()
+        .iter()
         .filter_map(|e| {
             let name = filename_from_url(&e.url).to_owned();
             let size = head_content_length(&e.url)?;
@@ -190,7 +208,8 @@ pub struct InstallOptions {
 
 impl Default for InstallOptions {
     fn default() -> Self {
-        let local_app_data = std::env::var("LOCALAPPDATA").unwrap_or_else(|_| "C:\\Users\\Public".to_owned());
+        let local_app_data =
+            std::env::var("LOCALAPPDATA").unwrap_or_else(|_| "C:\\Users\\Public".to_owned());
         Self {
             install_dir: PathBuf::from(local_app_data).join("kadr"),
             desktop_shortcut: true,
@@ -211,17 +230,17 @@ pub enum InstallProgress {
 }
 
 pub fn detect_existing_install() -> Option<ExistingInstall> {
-    use winreg::{enums::*, RegKey};
+    use winreg::{RegKey, enums::*};
     let hkcu = RegKey::predef(HKEY_CURRENT_USER);
 
     // Registry is the primary source — handles custom install dirs.
-    if let Ok(key) = hkcu.open_subkey(KADR_REG_KEY) {
-        if let Ok(path_str) = key.get_value::<String, _>("InstallPath") {
-            let dir = PathBuf::from(&path_str);
-            if dir.join("kadr.exe").exists() {
-                let version = key.get_value::<String, _>("InstalledVersion").ok();
-                return Some(ExistingInstall { dir, version });
-            }
+    if let Ok(key) = hkcu.open_subkey(KADR_REG_KEY)
+        && let Ok(path_str) = key.get_value::<String, _>("InstallPath")
+    {
+        let dir = PathBuf::from(&path_str);
+        if dir.join("kadr.exe").exists() {
+            let version = key.get_value::<String, _>("InstalledVersion").ok();
+            return Some(ExistingInstall { dir, version });
         }
     }
 
@@ -255,11 +274,20 @@ pub fn run_update(install_dir: &std::path::Path, tx: mpsc::Sender<InstallProgres
         let start = i as f32 / n * 0.95;
         let end = (i as f32 + 1.0) / n * 0.95;
         let filename = filename_from_url(&update.entry.url);
-        if let Err(e) = download_file(&update.entry.url, &install_dir.join(filename), filename, start, end, &tx) {
+        if let Err(e) = download_file(
+            &update.entry.url,
+            &install_dir.join(filename),
+            filename,
+            start,
+            end,
+            &tx,
+        ) {
             let _ = tx.send(InstallProgress::Error(format!("{e:#}")));
             return;
         }
-        if let Some(ts) = &update.updated_at { store_updated_at(filename, ts); }
+        if let Some(ts) = &update.updated_at {
+            store_updated_at(filename, ts);
+        }
     }
     let version = result.kadr_version.unwrap_or_else(|| "unknown".to_owned());
     let _ = write_install_registry(install_dir, &version);
@@ -296,11 +324,15 @@ fn do_install(opts: &InstallOptions, tx: &mpsc::Sender<InstallProgress>) -> Resu
     send_log("Creating install directory…", tx);
     std::fs::create_dir_all(&opts.install_dir)
         .with_context(|| format!("Cannot create {}", opts.install_dir.display()))?;
-    step += 1.0; send_step(step, tx);
+    step += 1.0;
+    send_step(step, tx);
 
     // 2. Download all configured files
     let kadr_release = fetch_release("kadr");
-    let kadr_version = kadr_release.as_ref().and_then(|r| r.version.clone()).unwrap_or_else(|| "unknown".to_owned());
+    let kadr_version = kadr_release
+        .as_ref()
+        .and_then(|r| r.version.clone())
+        .unwrap_or_else(|| "unknown".to_owned());
     let entries = load_config();
     let n_files = entries.len() as f32;
     send_log("Downloading files…", tx);
@@ -309,16 +341,27 @@ fn do_install(opts: &InstallOptions, tx: &mpsc::Sender<InstallProgress>) -> Resu
         let end = (step + (i as f32 + 1.0) / n_files) / steps;
         let filename = filename_from_url(&entry.url);
         let remote_ts = if entry.release_tag == "kadr" {
-            kadr_release.as_ref().and_then(|r| r.asset_timestamps.get(filename).cloned())
+            kadr_release
+                .as_ref()
+                .and_then(|r| r.asset_timestamps.get(filename).cloned())
         } else {
-            fetch_release(&entry.release_tag).and_then(|r| r.asset_timestamps.get(filename).cloned())
+            fetch_release(&entry.release_tag)
+                .and_then(|r| r.asset_timestamps.get(filename).cloned())
         };
-        download_file(&entry.url, &opts.install_dir.join(filename), filename, start, end, tx)?;
+        download_file(
+            &entry.url,
+            &opts.install_dir.join(filename),
+            filename,
+            start,
+            end,
+            tx,
+        )?;
         if let Some(ts) = remote_ts {
             store_updated_at(filename, &ts);
         }
     }
-    step += n_files; send_step(step, tx);
+    step += n_files;
+    send_step(step, tx);
 
     let exe_path = opts.install_dir.join("kadr.exe");
 
@@ -328,7 +371,8 @@ fn do_install(opts: &InstallOptions, tx: &mpsc::Sender<InstallProgress>) -> Resu
         let desktop = desktop_dir();
         create_shortcut(&exe_path, &desktop.join("Kadr.lnk"), "kadr")?;
     }
-    step += 1.0; send_step(step, tx);
+    step += 1.0;
+    send_step(step, tx);
 
     // 5. Start menu shortcut
     if opts.start_menu_shortcut {
@@ -337,21 +381,24 @@ fn do_install(opts: &InstallOptions, tx: &mpsc::Sender<InstallProgress>) -> Resu
         std::fs::create_dir_all(&sm).ok();
         create_shortcut(&exe_path, &sm.join("Kadr.lnk"), "kadr")?;
     }
-    step += 1.0; send_step(step, tx);
+    step += 1.0;
+    send_step(step, tx);
 
     // 6. Add to PATH
     if opts.add_to_path {
         send_log("Adding to user PATH…", tx);
         add_to_user_path(&opts.install_dir)?;
     }
-    step += 1.0; send_step(step, tx);
+    step += 1.0;
+    send_step(step, tx);
 
     // 7. Context menu
     if opts.context_menu {
         send_log("Registering context menu…", tx);
         register_context_menu(&exe_path)?;
     }
-    step += 1.0; send_step(step, tx);
+    step += 1.0;
+    send_step(step, tx);
 
     // 8. Default viewers + uninstall registry entry
     if opts.default_image_viewer {
@@ -365,7 +412,8 @@ fn do_install(opts: &InstallOptions, tx: &mpsc::Sender<InstallProgress>) -> Resu
     register_uninstall_entry(&exe_path, &opts.install_dir, &kadr_version)?;
     write_install_registry(&opts.install_dir, &kadr_version)?;
     refresh_icon_cache();
-    step += 1.0; send_step(step, tx);
+    step += 1.0;
+    send_step(step, tx);
 
     send_log("Done!", tx);
     Ok(())
@@ -374,12 +422,12 @@ fn do_install(opts: &InstallOptions, tx: &mpsc::Sender<InstallProgress>) -> Resu
 // ── Download ──────────────────────────────────────────────────────────────────
 
 fn head_content_length(url: &str) -> Option<u64> {
-    ureq::head(url).call().ok()
-        .and_then(|r| {
-            r.headers().get("content-length")
-                .and_then(|v| v.to_str().ok())
-                .and_then(|v| v.parse().ok())
-        })
+    ureq::head(url).call().ok().and_then(|r| {
+        r.headers()
+            .get("content-length")
+            .and_then(|v| v.to_str().ok())
+            .and_then(|v| v.parse().ok())
+    })
 }
 
 fn download_file(
@@ -391,25 +439,36 @@ fn download_file(
     tx: &mpsc::Sender<InstallProgress>,
 ) -> Result<()> {
     let _ = tx.send(InstallProgress::Log(format!("Downloading {label}…")));
-    let resp = ureq::get(url).call()
+    let resp = ureq::get(url)
+        .call()
         .with_context(|| format!("Failed to download {label}"))?;
-    let total: Option<u64> = resp.headers().get("content-length")
+    let total: Option<u64> = resp
+        .headers()
+        .get("content-length")
         .and_then(|v| v.to_str().ok())
         .and_then(|v| v.parse().ok());
     let mut reader = resp.into_body().into_reader();
-    let mut data: Vec<u8> = if let Some(t) = total { Vec::with_capacity(t as usize) } else { Vec::new() };
+    let mut data: Vec<u8> = if let Some(t) = total {
+        Vec::with_capacity(t as usize)
+    } else {
+        Vec::new()
+    };
     let mut buf = [0u8; 65536];
     loop {
-        let n = reader.read(&mut buf).context("Read error during download")?;
-        if n == 0 { break; }
+        let n = reader
+            .read(&mut buf)
+            .context("Read error during download")?;
+        if n == 0 {
+            break;
+        }
         data.extend_from_slice(&buf[..n]);
         if let Some(t) = total {
-            let frac = progress_start + (data.len() as f32 / t as f32) * (progress_end - progress_start);
+            let frac =
+                progress_start + (data.len() as f32 / t as f32) * (progress_end - progress_start);
             let _ = tx.send(InstallProgress::Step(frac));
         }
     }
-    std::fs::write(dest, &data)
-        .with_context(|| format!("Cannot write {}", dest.display()))?;
+    std::fs::write(dest, &data).with_context(|| format!("Cannot write {}", dest.display()))?;
     let _ = tx.send(InstallProgress::Log(format!("Installed {label}")));
     Ok(())
 }
@@ -445,13 +504,15 @@ fn desktop_dir() -> PathBuf {
 fn start_menu_dir() -> PathBuf {
     std::env::var("APPDATA")
         .map(|p| PathBuf::from(p).join("Microsoft\\Windows\\Start Menu\\Programs\\Kadr"))
-        .unwrap_or_else(|_| PathBuf::from("C:\\ProgramData\\Microsoft\\Windows\\Start Menu\\Programs\\Kadr"))
+        .unwrap_or_else(|_| {
+            PathBuf::from("C:\\ProgramData\\Microsoft\\Windows\\Start Menu\\Programs\\Kadr")
+        })
 }
 
 // ── PATH ─────────────────────────────────────────────────────────────────────
 
 fn add_to_user_path(dir: &Path) -> Result<()> {
-    use winreg::{enums::*, RegKey};
+    use winreg::{RegKey, enums::*};
     let hkcu = RegKey::predef(HKEY_CURRENT_USER);
     let env_key = hkcu
         .open_subkey_with_flags("Environment", KEY_READ | KEY_WRITE)
@@ -459,7 +520,10 @@ fn add_to_user_path(dir: &Path) -> Result<()> {
 
     let current: String = env_key.get_value("Path").unwrap_or_default();
     let dir_str = dir.to_string_lossy();
-    if current.split(';').any(|p| p.trim().eq_ignore_ascii_case(&*dir_str)) {
+    if current
+        .split(';')
+        .any(|p| p.trim().eq_ignore_ascii_case(&dir_str))
+    {
         return Ok(());
     }
     let new_path = if current.is_empty() {
@@ -467,7 +531,9 @@ fn add_to_user_path(dir: &Path) -> Result<()> {
     } else {
         format!("{current};{dir_str}")
     };
-    env_key.set_value("Path", &new_path).context("Cannot write PATH")?;
+    env_key
+        .set_value("Path", &new_path)
+        .context("Cannot write PATH")?;
 
     // Broadcast WM_SETTINGCHANGE so open Explorer / cmd windows pick up the new PATH
     let _ = powershell(
@@ -479,7 +545,7 @@ fn add_to_user_path(dir: &Path) -> Result<()> {
 // ── Context menu ─────────────────────────────────────────────────────────────
 
 fn register_context_menu(exe: &Path) -> Result<()> {
-    use winreg::{enums::*, RegKey};
+    use winreg::{RegKey, enums::*};
     let hkcu = RegKey::predef(HKEY_CURRENT_USER);
     let icon = format!("\"{}\",0", exe.display());
     let cmd_file = format!("\"{}\" \"%1\"", exe.display());
@@ -487,13 +553,28 @@ fn register_context_menu(exe: &Path) -> Result<()> {
     let cmd_bg = format!("\"{}\" \"%V\"", exe.display());
 
     // Files: right-click on any file
-    register_shell_entry(&hkcu, r"Software\Classes\*\shell\Open with Kadr", &cmd_file, &icon)?;
+    register_shell_entry(
+        &hkcu,
+        r"Software\Classes\*\shell\Open with Kadr",
+        &cmd_file,
+        &icon,
+    )?;
 
     // Folders: right-click on a folder
-    register_shell_entry(&hkcu, r"Software\Classes\Directory\shell\Open with Kadr", &cmd_folder, &icon)?;
+    register_shell_entry(
+        &hkcu,
+        r"Software\Classes\Directory\shell\Open with Kadr",
+        &cmd_folder,
+        &icon,
+    )?;
 
     // Folder background: right-click on empty space inside a folder
-    register_shell_entry(&hkcu, r"Software\Classes\Directory\Background\shell\Open with Kadr", &cmd_bg, &icon)?;
+    register_shell_entry(
+        &hkcu,
+        r"Software\Classes\Directory\Background\shell\Open with Kadr",
+        &cmd_bg,
+        &icon,
+    )?;
 
     Ok(())
 }
@@ -501,9 +582,11 @@ fn register_context_menu(exe: &Path) -> Result<()> {
 fn register_shell_entry(hkcu: &winreg::RegKey, base: &str, cmd: &str, icon: &str) -> Result<()> {
     use winreg::enums::*;
     let (cmd_key, _) = hkcu
-        .create_subkey(&format!("{base}\\command"))
+        .create_subkey(format!("{base}\\command"))
         .with_context(|| format!("Cannot create {base}\\command"))?;
-    cmd_key.set_value("", &cmd.to_owned()).context("Cannot set command")?;
+    cmd_key
+        .set_value("", &cmd.to_owned())
+        .context("Cannot set command")?;
 
     let menu_key = hkcu
         .open_subkey_with_flags(base, KEY_WRITE)
@@ -517,7 +600,9 @@ fn register_shell_entry(hkcu: &winreg::RegKey, base: &str, cmd: &str, icon: &str
 
 fn set_default_image_viewer(exe: &Path) -> Result<()> {
     register_prog_id(exe, "kadr.image", "Image File")?;
-    for ext in &["jpg", "jpeg", "png", "gif", "bmp", "tiff", "tif", "webp", "avif"] {
+    for ext in &[
+        "jpg", "jpeg", "png", "gif", "bmp", "tiff", "tif", "webp", "avif",
+    ] {
         set_user_file_assoc(ext, "kadr.image")?;
     }
     Ok(())
@@ -532,20 +617,20 @@ fn set_default_video_viewer(exe: &Path) -> Result<()> {
 }
 
 fn register_prog_id(exe: &Path, prog_id: &str, description: &str) -> Result<()> {
-    use winreg::{enums::*, RegKey};
+    use winreg::{RegKey, enums::*};
     let hkcu = RegKey::predef(HKEY_CURRENT_USER);
     let base = format!("Software\\Classes\\{prog_id}");
     let (key, _) = hkcu.create_subkey(&base).context("prog id root")?;
     key.set_value("", &description.to_owned())?;
-    let (cmd, _) = hkcu.create_subkey(&format!("{base}\\shell\\open\\command"))?;
+    let (cmd, _) = hkcu.create_subkey(format!("{base}\\shell\\open\\command"))?;
     cmd.set_value("", &format!("\"{}\" \"%1\"", exe.display()))?;
     Ok(())
 }
 
 fn set_user_file_assoc(ext: &str, prog_id: &str) -> Result<()> {
-    use winreg::{enums::*, RegKey};
+    use winreg::{RegKey, enums::*};
     let hkcu = RegKey::predef(HKEY_CURRENT_USER);
-    let (key, _) = hkcu.create_subkey(&format!("Software\\Classes\\.{ext}"))?;
+    let (key, _) = hkcu.create_subkey(format!("Software\\Classes\\.{ext}"))?;
     key.set_value("", &prog_id.to_owned())?;
     Ok(())
 }
@@ -553,15 +638,22 @@ fn set_user_file_assoc(ext: &str, prog_id: &str) -> Result<()> {
 // ── Uninstall entry ───────────────────────────────────────────────────────────
 
 fn register_uninstall_entry(exe: &Path, install_dir: &Path, version: &str) -> Result<()> {
-    use winreg::{enums::*, RegKey};
+    use winreg::{RegKey, enums::*};
     let hkcu = RegKey::predef(HKEY_CURRENT_USER);
-    let key_path =
-        r"Software\Microsoft\Windows\CurrentVersion\Uninstall\kadr";
-    let (key, _) = hkcu.create_subkey(key_path).context("Cannot create uninstall key")?;
+    let key_path = r"Software\Microsoft\Windows\CurrentVersion\Uninstall\kadr";
+    let (key, _) = hkcu
+        .create_subkey(key_path)
+        .context("Cannot create uninstall key")?;
     key.set_value("DisplayName", &"kadr".to_owned())?;
     key.set_value("DisplayVersion", &version.to_owned())?;
-    key.set_value("UninstallString", &format!("\"{}\" --uninstall", exe.display()))?;
-    key.set_value("InstallLocation", &install_dir.to_string_lossy().to_string())?;
+    key.set_value(
+        "UninstallString",
+        &format!("\"{}\" --uninstall", exe.display()),
+    )?;
+    key.set_value(
+        "InstallLocation",
+        &install_dir.to_string_lossy().to_string(),
+    )?;
     key.set_value("DisplayIcon", &format!("\"{}\",0", exe.display()))?;
     key.set_value("Publisher", &"".to_owned())?;
     key.set_value("NoModify", &1u32)?;
@@ -572,9 +664,11 @@ fn register_uninstall_entry(exe: &Path, install_dir: &Path, version: &str) -> Re
 // ── Registry ─────────────────────────────────────────────────────────────────
 
 fn write_install_registry(install_dir: &Path, version: &str) -> Result<()> {
-    use winreg::{enums::*, RegKey};
+    use winreg::{RegKey, enums::*};
     let hkcu = RegKey::predef(HKEY_CURRENT_USER);
-    let (key, _) = hkcu.create_subkey(KADR_REG_KEY).context("Cannot create Kadr registry key")?;
+    let (key, _) = hkcu
+        .create_subkey(KADR_REG_KEY)
+        .context("Cannot create Kadr registry key")?;
     key.set_value("InstallPath", &install_dir.to_string_lossy().to_string())?;
     if version != "unknown" {
         key.set_value("InstalledVersion", &version.to_owned())?;
