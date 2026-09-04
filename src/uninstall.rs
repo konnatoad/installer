@@ -69,16 +69,15 @@ fn remove_context_menu() {
 fn remove_from_path(install_dir: &Path) {
     use winreg::{enums::*, RegKey};
     let hkcu = RegKey::predef(HKEY_CURRENT_USER);
-    if let Ok(key) = hkcu.open_subkey_with_flags("Environment", KEY_READ | KEY_WRITE) {
-        if let Ok(current) = key.get_value::<String, _>("Path") {
+    if let Ok(key) = hkcu.open_subkey_with_flags("Environment", KEY_READ | KEY_WRITE)
+        && let Ok(current) = key.get_value::<String, _>("Path") {
             let dir_str = install_dir.to_string_lossy();
             let new: Vec<&str> = current
                 .split(';')
-                .filter(|p| !p.trim().eq_ignore_ascii_case(&*dir_str))
+                .filter(|p| !p.trim().eq_ignore_ascii_case(&dir_str))
                 .collect();
             let _ = key.set_value("Path", &new.join(";"));
         }
-    }
 }
 
 fn remove_shortcuts() {
@@ -114,7 +113,7 @@ fn remove_file_assocs() {
     use winreg::{enums::HKEY_CURRENT_USER, RegKey};
     let hkcu = RegKey::predef(HKEY_CURRENT_USER);
     for id in &["kadr.image", "kadr.video"] {
-        let _ = hkcu.delete_subkey_all(&format!("Software\\Classes\\{id}"));
+        let _ = hkcu.delete_subkey_all(format!("Software\\Classes\\{id}"));
     }
     for ext in &[
         "jpg", "jpeg", "png", "gif", "bmp", "tiff", "tif", "webp", "avif", "mp4", "mkv", "webm",

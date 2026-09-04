@@ -27,14 +27,13 @@ pub fn show(ui: &mut Ui, opts: &mut InstallOptions) -> Option<OptionsAction> {
                 if resp.changed() {
                     opts.install_dir = std::path::PathBuf::from(&editable);
                 }
-                if ui.button("Browse…").clicked() {
-                    if let Some(dir) = rfd::FileDialog::new()
+                if ui.button("Browse…").clicked()
+                    && let Some(dir) = rfd::FileDialog::new()
                         .set_title("Choose install directory")
                         .pick_folder()
                     {
                         opts.install_dir = dir;
                     }
-                }
             });
 
             ui.add_space(12.0);
