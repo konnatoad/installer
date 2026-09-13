@@ -1,6 +1,7 @@
 use egui::{Color32, RichText, Stroke, Ui};
 
 use crate::install::{Channel, InstallOptions};
+use crate::theme;
 
 pub enum OptionsAction {
     Back,
@@ -86,13 +87,9 @@ pub fn show(ui: &mut Ui, opts: &mut InstallOptions) -> Option<OptionsAction> {
             action = Some(OptionsAction::Back);
         }
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            let btn =
-                egui::Button::new(RichText::new("Install").color(Color32::from_rgb(145, 190, 255)))
-                    .fill(Color32::from_rgba_premultiplied(99, 155, 255, 38))
-                    .stroke(Stroke::new(
-                        1.0,
-                        Color32::from_rgba_premultiplied(99, 155, 255, 160),
-                    ));
+            let btn = egui::Button::new(RichText::new("Install").color(theme::ACCENT_TEXT))
+                .fill(theme::accent_fill(38))
+                .stroke(Stroke::new(1.0, theme::accent_fill(160)));
             if ui.add(btn).clicked() {
                 action = Some(OptionsAction::Install(opts.clone()));
             }
@@ -103,11 +100,7 @@ pub fn show(ui: &mut Ui, opts: &mut InstallOptions) -> Option<OptionsAction> {
 }
 
 fn section(ui: &mut Ui, label: &str) {
-    ui.label(
-        RichText::new(label)
-            .size(11.0)
-            .color(Color32::from_gray(100)),
-    );
+    ui.label(RichText::new(label).size(11.0).color(theme::TEXT_MUTED));
     ui.add_space(4.0);
 }
 

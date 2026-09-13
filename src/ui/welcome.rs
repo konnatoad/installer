@@ -1,4 +1,5 @@
 use crate::install::Channel;
+use crate::theme;
 use egui::{Color32, RichText, Stroke, Ui};
 use std::path::Path;
 
@@ -69,85 +70,79 @@ pub fn show(
     let avail_h = ui.available_height();
 
     ui.horizontal(|ui| {
-        // ── Sidebar ───────────────────────────────────────────────────────────
-        egui::Frame::new()
-            .fill(Color32::from_rgb(13, 11, 19))
-            .show(ui, |ui| {
-                ui.with_layout(egui::Layout::top_down(egui::Align::LEFT), |ui| {
-                    ui.set_width(sidebar_w);
-                    ui.set_min_height(avail_h);
-                    ui.add_space(12.0);
+        egui::Frame::new().fill(theme::SURFACE).show(ui, |ui| {
+            ui.with_layout(egui::Layout::top_down(egui::Align::LEFT), |ui| {
+                ui.set_width(sidebar_w);
+                ui.set_min_height(avail_h);
+                ui.add_space(12.0);
 
-                    let btn_label = if channel_switch_pending {
-                        "Switch Channel".to_owned()
-                    } else {
-                        match pending_updates {
-                            None => "Update All  …".to_owned(),
-                            Some([]) => "Up to date".to_owned(),
-                            Some(p) => format!("Update All  ({})", p.len()),
-                        }
-                    };
-                    let btn_active = has_updates;
-                    let btn_color = if btn_active {
-                        Color32::from_rgb(99, 155, 255)
-                    } else {
-                        Color32::from_gray(55)
-                    };
-                    if sidebar_btn(ui, sidebar_w - 20.0, &btn_label, btn_color) && btn_active {
-                        action = Some(WelcomeAction::RunUpdate);
+                let btn_label = if channel_switch_pending {
+                    "Switch Channel".to_owned()
+                } else {
+                    match pending_updates {
+                        None => "Update All  …".to_owned(),
+                        Some([]) => "Up to date".to_owned(),
+                        Some(p) => format!("Update All  ({})", p.len()),
                     }
+                };
+                let btn_active = has_updates;
+                let btn_color = if btn_active {
+                    theme::ACCENT
+                } else {
+                    theme::SURFACE4
+                };
+                if sidebar_btn(ui, sidebar_w - 20.0, &btn_label, btn_color) && btn_active {
+                    action = Some(WelcomeAction::RunUpdate);
+                }
 
-                    ui.add_space(14.0);
-                    sidebar_divider(ui, sidebar_w);
-                    ui.add_space(8.0);
+                ui.add_space(14.0);
+                sidebar_divider(ui, sidebar_w);
+                ui.add_space(8.0);
 
-                    let items: &[(Panel, &str)] = &[
-                        (Panel::Kadr, "Kadr"),
-                        (Panel::Installer, "Installer"),
-                        (Panel::Dependencies, "Dependencies"),
-                    ];
-                    for (panel, label) in items {
-                        let dot = status_dot(match *panel {
-                            Panel::Kadr => kadr_outdated,
-                            Panel::Installer => installer_outdated,
-                            Panel::Dependencies => deps_outdated,
-                            Panel::Uninstall => None,
-                        });
-                        if nav_item(ui, sidebar_w, label, dot, selected_panel == &Some(*panel)) {
-                            *selected_panel = if *selected_panel == Some(*panel) {
-                                None
-                            } else {
-                                Some(*panel)
-                            };
-                        }
-                    }
-
-                    ui.add_space(8.0);
-                    sidebar_divider(ui, sidebar_w);
-                    ui.add_space(8.0);
-
-                    if nav_item(
-                        ui,
-                        sidebar_w,
-                        "Uninstall",
-                        None,
-                        *selected_panel == Some(Panel::Uninstall),
-                    ) {
-                        *selected_panel = if *selected_panel == Some(Panel::Uninstall) {
+                let items: &[(Panel, &str)] = &[
+                    (Panel::Kadr, "Kadr"),
+                    (Panel::Installer, "Installer"),
+                    (Panel::Dependencies, "Dependencies"),
+                ];
+                for (panel, label) in items {
+                    let dot = status_dot(match *panel {
+                        Panel::Kadr => kadr_outdated,
+                        Panel::Installer => installer_outdated,
+                        Panel::Dependencies => deps_outdated,
+                        Panel::Uninstall => None,
+                    });
+                    if nav_item(ui, sidebar_w, label, dot, selected_panel == &Some(*panel)) {
+                        *selected_panel = if *selected_panel == Some(*panel) {
                             None
                         } else {
-                            Some(Panel::Uninstall)
+                            Some(*panel)
                         };
                     }
-                }); // end with_layout
+                }
+
+                ui.add_space(8.0);
+                sidebar_divider(ui, sidebar_w);
+                ui.add_space(8.0);
+
+                if nav_item(
+                    ui,
+                    sidebar_w,
+                    "Uninstall",
+                    None,
+                    *selected_panel == Some(Panel::Uninstall),
+                ) {
+                    *selected_panel = if *selected_panel == Some(Panel::Uninstall) {
+                        None
+                    } else {
+                        Some(Panel::Uninstall)
+                    };
+                }
             });
+        });
 
-        // Vertical separator
         let (sep_rect, _) = ui.allocate_exact_size(egui::vec2(1.0, avail_h), egui::Sense::hover());
-        ui.painter()
-            .rect_filled(sep_rect, 0.0, Color32::from_rgb(30, 26, 44));
+        ui.painter().rect_filled(sep_rect, 0.0, theme::BORDER);
 
-        // ── Content panel ─────────────────────────────────────────────────────
         ui.vertical(|ui| {
             ui.add_space(16.0);
             match *selected_panel {
@@ -193,8 +188,6 @@ pub fn show(
     action
 }
 
-// ── Fresh install layout ──────────────────────────────────────────────────────
-
 fn show_fresh_install(
     ui: &mut Ui,
     total_install_size: Option<u64>,
@@ -210,7 +203,7 @@ fn show_fresh_install(
         ui.label(
             RichText::new("Kadr Image Viewer")
                 .size(22.0)
-                .color(Color32::from_gray(225))
+                .color(theme::TEXT)
                 .strong(),
         );
         ui.add_space(4.0);
@@ -218,11 +211,7 @@ fn show_fresh_install(
             Some(s) => format!("~{} · requires internet connection", fmt_size(s)),
             None => "Requires internet connection · calculating size…".to_owned(),
         };
-        ui.label(
-            RichText::new(size_str)
-                .size(11.0)
-                .color(Color32::from_gray(70)),
-        );
+        ui.label(RichText::new(size_str).size(11.0).color(theme::TEXT_MUTED));
     });
 
     ui.add_space(16.0);
@@ -235,8 +224,8 @@ fn show_fresh_install(
             // Patchnotes
             let notes_text = patchnotes.unwrap_or("Loading…");
             egui::Frame::new()
-                .fill(Color32::from_rgb(18, 16, 26))
-                .stroke(Stroke::new(1.0, Color32::from_rgb(45, 38, 65)))
+                .fill(theme::SURFACE)
+                .stroke(Stroke::new(1.0, theme::BORDER))
                 .corner_radius(4.0)
                 .inner_margin(egui::Margin {
                     left: 12,
@@ -251,13 +240,13 @@ fn show_fresh_install(
                         if t.is_empty() {
                             continue;
                         }
-                        ui.label(RichText::new(t).size(11.5).color(Color32::from_gray(140)));
+                        ui.label(RichText::new(t).size(11.5).color(theme::TEXT_DIM));
                     }
                 });
 
             ui.add_space(14.0);
 
-            if content_btn(ui, total_w, "Install Kadr", Color32::from_rgb(99, 155, 255)) {
+            if content_btn(ui, total_w, "Install Kadr", theme::ACCENT) {
                 *action = Some(WelcomeAction::GoInstall);
             }
         });
@@ -266,14 +255,12 @@ fn show_fresh_install(
     action.take()
 }
 
-// ── Panel content functions ───────────────────────────────────────────────────
-
 fn show_patchnotes(ui: &mut Ui, patchnotes: Option<&str>) {
     let notes_text = patchnotes.unwrap_or("Loading…");
     let w = ui.available_width() - 20.0;
     egui::Frame::new()
-        .fill(Color32::from_rgb(18, 16, 26))
-        .stroke(Stroke::new(1.0, Color32::from_rgb(45, 38, 65)))
+        .fill(theme::SURFACE)
+        .stroke(Stroke::new(1.0, theme::BORDER))
         .corner_radius(4.0)
         .inner_margin(egui::Margin {
             left: 12,
@@ -288,7 +275,7 @@ fn show_patchnotes(ui: &mut Ui, patchnotes: Option<&str>) {
                 if t.is_empty() {
                     continue;
                 }
-                ui.label(RichText::new(t).size(11.5).color(Color32::from_gray(140)));
+                ui.label(RichText::new(t).size(11.5).color(theme::TEXT_DIM));
             }
         });
 }
@@ -307,11 +294,7 @@ fn show_kadr_panel(
 
     ui.add_space(8.0);
     ui.horizontal(|ui| {
-        ui.label(
-            RichText::new("Channel")
-                .size(12.0)
-                .color(Color32::from_gray(140)),
-        );
+        ui.label(RichText::new("Channel").size(12.0).color(theme::TEXT_DIM));
         egui::ComboBox::from_id_salt("kadr_channel")
             .selected_text(channel.label())
             .show_ui(ui, |ui| {
@@ -322,10 +305,10 @@ fn show_kadr_panel(
 
     let switching = *channel != stored_channel;
     let (status_text, status_color) = match outdated {
-        None => ("Checking for updates…".to_owned(), Color32::from_gray(80)),
+        None => ("Checking for updates…".to_owned(), theme::TEXT_MUTED),
         Some(false) => (
             format!("v{} — Up to date", installed_version.unwrap_or("?")),
-            Color32::from_rgb(80, 200, 120),
+            theme::SUCCESS,
         ),
         Some(true) if switching => (
             format!(
@@ -333,11 +316,11 @@ fn show_kadr_panel(
                 installed_version.unwrap_or("?"),
                 channel.label()
             ),
-            Color32::from_rgb(220, 80, 80),
+            theme::ERROR_TEXT,
         ),
         Some(true) => (
             format!("v{} — Update available", installed_version.unwrap_or("?")),
-            Color32::from_rgb(220, 80, 80),
+            theme::ERROR_TEXT,
         ),
     };
     ui.add_space(8.0);
@@ -350,7 +333,7 @@ fn show_kadr_panel(
         } else {
             "Update Kadr"
         };
-        if content_btn(ui, w, label, Color32::from_rgb(99, 155, 255)) {
+        if content_btn(ui, w, label, theme::ACCENT) {
             action = Some(WelcomeAction::RunUpdate);
         }
     }
@@ -371,19 +354,13 @@ fn show_installer_panel(
     panel_title(ui, "Installer");
 
     let (status_text, status_color) = match outdated {
-        None => (
-            format!("v{current_version} — checking…"),
-            Color32::from_gray(80),
-        ),
-        Some(false) => (
-            format!("v{current_version} — Up to date"),
-            Color32::from_rgb(80, 200, 120),
-        ),
+        None => (format!("v{current_version} — checking…"), theme::TEXT_MUTED),
+        Some(false) => (format!("v{current_version} — Up to date"), theme::SUCCESS),
         Some(true) => {
             let new_ver = remote_version.unwrap_or("?");
             (
                 format!("v{current_version} -> v{new_ver} available"),
-                Color32::from_rgb(220, 80, 80),
+                theme::ERROR_TEXT,
             )
         }
     };
@@ -393,21 +370,14 @@ fn show_installer_panel(
     ui.label(
         RichText::new("The new installer will be saved to your Downloads folder.")
             .size(11.0)
-            .color(Color32::from_gray(65)),
+            .color(theme::TEXT_MUTED),
     );
 
     ui.add_space(16.0);
 
     match dl_state {
         InstallerDlState::Idle => {
-            if outdated != Some(false)
-                && content_btn(
-                    ui,
-                    w,
-                    "Download Installer",
-                    Color32::from_rgb(140, 115, 185),
-                )
-            {
+            if outdated != Some(false) && content_btn(ui, w, "Download Installer", theme::ACCENT2) {
                 action = Some(WelcomeAction::DownloadInstaller);
             }
         }
@@ -415,29 +385,24 @@ fn show_installer_panel(
             ui.label(
                 RichText::new("Downloading…")
                     .size(13.0)
-                    .color(Color32::from_gray(140)),
+                    .color(theme::TEXT_DIM),
             );
         }
         InstallerDlState::Done(path) => {
             ui.label(
                 RichText::new("Download complete")
                     .size(13.0)
-                    .color(Color32::from_rgb(80, 200, 120)),
+                    .color(theme::SUCCESS),
             );
             ui.add_space(4.0);
             ui.label(
                 RichText::new(path.display().to_string())
                     .size(10.5)
-                    .color(Color32::from_gray(70))
+                    .color(theme::TEXT_MUTED)
                     .monospace(),
             );
             ui.add_space(12.0);
-            if content_btn(
-                ui,
-                w,
-                "Launch New Installer",
-                Color32::from_rgb(99, 155, 255),
-            ) {
+            if content_btn(ui, w, "Launch New Installer", theme::ACCENT) {
                 action = Some(WelcomeAction::LaunchInstallerAndExit(path.clone()));
             }
         }
@@ -445,10 +410,10 @@ fn show_installer_panel(
             ui.label(
                 RichText::new(format!("Download failed: {e}"))
                     .size(12.0)
-                    .color(Color32::from_rgb(220, 80, 80)),
+                    .color(theme::ERROR_TEXT),
             );
             ui.add_space(12.0);
-            if content_btn(ui, w, "Retry", Color32::from_rgb(140, 115, 185)) {
+            if content_btn(ui, w, "Retry", theme::ACCENT2) {
                 action = Some(WelcomeAction::DownloadInstaller);
             }
         }
@@ -470,37 +435,32 @@ fn show_deps_panel(ui: &mut Ui, outdated: Option<bool>, pending: &[&str]) -> Opt
             ui.label(
                 RichText::new("Checking…")
                     .size(13.0)
-                    .color(Color32::from_gray(80)),
+                    .color(theme::TEXT_MUTED),
             );
         }
         Some(false) => {
             ui.label(
                 RichText::new("All dependencies up to date")
                     .size(13.0)
-                    .color(Color32::from_rgb(80, 200, 120)),
+                    .color(theme::SUCCESS),
             );
         }
         Some(true) => {
             ui.label(
                 RichText::new("Updates available:")
                     .size(13.0)
-                    .color(Color32::from_rgb(220, 80, 80)),
+                    .color(theme::ERROR_TEXT),
             );
             ui.add_space(6.0);
             for name in pending {
                 ui.label(
                     RichText::new(format!("  • {name}"))
                         .size(12.0)
-                        .color(Color32::from_gray(140)),
+                        .color(theme::TEXT_DIM),
                 );
             }
             ui.add_space(16.0);
-            if content_btn(
-                ui,
-                w,
-                "Update Dependencies",
-                Color32::from_rgb(99, 155, 255),
-            ) {
+            if content_btn(ui, w, "Update Dependencies", theme::ACCENT) {
                 action = Some(WelcomeAction::RunUpdate);
             }
         }
@@ -519,18 +479,16 @@ fn show_uninstall_panel(ui: &mut Ui) -> Option<WelcomeAction> {
     ui.label(
         RichText::new("This will remove Kadr and all its files from this computer.")
             .size(12.0)
-            .color(Color32::from_gray(110)),
+            .color(theme::TEXT_DIM),
     );
     ui.add_space(20.0);
 
-    if content_btn(ui, w, "Uninstall Kadr", Color32::from_rgb(205, 80, 110)) {
+    if content_btn(ui, w, "Uninstall Kadr", theme::ERROR_TEXT) {
         action = Some(WelcomeAction::GoUninstall);
     }
 
     action
 }
-
-// ── Sidebar components ────────────────────────────────────────────────────────
 
 fn sidebar_btn(ui: &mut Ui, width: f32, label: &str, color: Color32) -> bool {
     let height = 36.0;
@@ -558,7 +516,7 @@ fn sidebar_btn(ui: &mut Ui, width: f32, label: &str, color: Color32) -> bool {
             egui::Align2::CENTER_CENTER,
             label,
             egui::FontId::proportional(12.0),
-            Color32::from_gray(215),
+            theme::TEXT,
         );
         resp.clicked()
     })
@@ -570,9 +528,9 @@ fn nav_item(ui: &mut Ui, width: f32, label: &str, dot: Option<Color32>, selected
     let (rect, resp) = ui.allocate_exact_size(egui::vec2(width, height), egui::Sense::click());
 
     let bg = if selected {
-        Color32::from_rgba_premultiplied(99, 155, 255, 18)
+        theme::accent_fill(18)
     } else if resp.hovered() {
-        Color32::from_rgba_premultiplied(255, 255, 255, 8)
+        theme::white_wash(8)
     } else {
         Color32::TRANSPARENT
     };
@@ -580,14 +538,13 @@ fn nav_item(ui: &mut Ui, width: f32, label: &str, dot: Option<Color32>, selected
 
     if selected {
         let bar = egui::Rect::from_min_size(rect.min, egui::vec2(3.0, height));
-        ui.painter()
-            .rect_filled(bar, 0.0, Color32::from_rgb(99, 155, 255));
+        ui.painter().rect_filled(bar, 0.0, theme::ACCENT);
     }
 
     let text_color = if selected {
-        Color32::from_gray(220)
+        theme::TEXT
     } else {
-        Color32::from_gray(140)
+        theme::TEXT_DIM
     };
     ui.painter().text(
         egui::pos2(rect.min.x + 16.0, rect.center().y),
@@ -610,26 +567,17 @@ fn nav_item(ui: &mut Ui, width: f32, label: &str, dot: Option<Color32>, selected
 
 fn sidebar_divider(ui: &mut Ui, width: f32) {
     let (rect, _) = ui.allocate_exact_size(egui::vec2(width, 1.0), egui::Sense::hover());
-    ui.painter()
-        .rect_filled(rect, 0.0, Color32::from_rgb(28, 25, 40));
+    ui.painter().rect_filled(rect, 0.0, theme::BORDER);
 }
 
-// ── Content helpers ───────────────────────────────────────────────────────────
-
 fn panel_title(ui: &mut Ui, title: &str) {
-    ui.label(
-        RichText::new(title)
-            .size(18.0)
-            .color(Color32::from_gray(210))
-            .strong(),
-    );
+    ui.label(RichText::new(title).size(18.0).color(theme::TEXT).strong());
     let rect = ui.cursor();
     let line = egui::Rect::from_min_size(
         egui::pos2(rect.min.x, rect.min.y),
         egui::vec2(ui.available_width() - 20.0, 1.0),
     );
-    ui.painter()
-        .rect_filled(line, 0.0, Color32::from_rgb(35, 30, 50));
+    ui.painter().rect_filled(line, 0.0, theme::BORDER);
     ui.add_space(2.0);
 }
 
@@ -658,7 +606,7 @@ fn content_btn(ui: &mut Ui, width: f32, label: &str, accent: Color32) -> bool {
         egui::Align2::CENTER_CENTER,
         label,
         egui::FontId::proportional(13.0),
-        Color32::from_gray(215),
+        theme::TEXT,
     );
     resp.clicked()
 }
@@ -666,8 +614,8 @@ fn content_btn(ui: &mut Ui, width: f32, label: &str, accent: Color32) -> bool {
 fn status_dot(outdated: Option<bool>) -> Option<Color32> {
     match outdated {
         None => None,
-        Some(false) => Some(Color32::from_rgb(80, 200, 120)),
-        Some(true) => Some(Color32::from_rgb(220, 80, 80)),
+        Some(false) => Some(theme::SUCCESS),
+        Some(true) => Some(theme::ERROR_TEXT),
     }
 }
 

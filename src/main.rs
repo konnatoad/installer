@@ -2,8 +2,9 @@
 
 mod app;
 mod install;
-mod uninstall;
+mod theme;
 mod ui;
+mod uninstall;
 
 fn main() -> eframe::Result {
     let options = eframe::NativeOptions {
@@ -68,14 +69,18 @@ fn load_icon() -> egui::IconData {
             }
 
             let idx = (y * size + x) * 4;
-            pixels[idx]     = r.0;
+            pixels[idx] = r.0;
             pixels[idx + 1] = r.1;
             pixels[idx + 2] = r.2;
             pixels[idx + 3] = r.3;
         }
     }
 
-    egui::IconData { rgba: pixels, width: size as u32, height: size as u32 }
+    egui::IconData {
+        rgba: pixels,
+        width: size as u32,
+        height: size as u32,
+    }
 }
 
 fn rrect_sdf(cx: f32, cy: f32, hw: f32, hh: f32, r: f32) -> f32 {
