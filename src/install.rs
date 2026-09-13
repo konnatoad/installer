@@ -15,6 +15,34 @@ pub struct DownloadEntry {
     pub release_tag: String,
 }
 
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Channel {
+    Stable,
+    Beta,
+}
+
+impl Channel {
+    pub fn tag(self) -> &'static str {
+        match self {
+            Channel::Stable => "kadr",
+            Channel::Beta => "beta",
+        }
+    }
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Channel::Stable => "Stable",
+            Channel::Beta => "Beta",
+        }
+    }
+}
+
+impl Default for Channel {
+    fn default() -> Self {
+        Channel::Stable
+    }
+}
+
 const DOWNLOADS_URL: &str = "https://bomzh.fm/raw/downloads";
 
 pub fn load_config() -> Vec<DownloadEntry> {
@@ -29,6 +57,19 @@ pub fn load_config() -> Vec<DownloadEntry> {
         return entries;
     }
     Vec::new()
+}
+
+pub fn load_config_for_channel(channel: Channel) -> Vec<DownloadEntry> {
+    let mut entries = load_config();
+    if channel == Channel::Beta {
+        for e in &mut entries {
+            if e.release_tag == "kadr" {
+                e.url = e.url.replacen("/download/kadr/", "/download/beta/", 1);
+                e.release_tag = "beta".to_owned();
+            }
+        }
+    }
+    entries
 }
 
 pub fn filename_from_url(url: &str) -> &str {
@@ -105,7 +146,7 @@ pub struct UpdateCheckResult {
 }
 
 pub fn get_pending_filenames(install_dir: &Path) -> Vec<String> {
-    get_pending_updates(install_dir)
+    get_pending_updates(install_dir, stored_channel())
         .pending
         .into_iter()
         .map(|u| filename_from_url(&u.entry.url).to_owned())
@@ -131,11 +172,11 @@ pub fn download_installer_to_downloads() -> Result<std::path::PathBuf> {
     Ok(dest)
 }
 
-pub fn get_pending_updates(install_dir: &Path) -> UpdateCheckResult {
+pub fn get_pending_updates(install_dir: &Path, channel: Channel) -> UpdateCheckResult {
     let mut pending = Vec::new();
     let mut kadr_version = None;
 
-    for entry in load_config() {
+    for entry in load_config_for_channel(channel) {
         let filename = filename_from_url(&entry.url);
         let path = install_dir.join(filename);
 
@@ -148,7 +189,7 @@ pub fn get_pending_updates(install_dir: &Path) -> UpdateCheckResult {
         }
 
         if let Some(release) = fetch_release(&entry.release_tag) {
-            if entry.release_tag == "kadr" {
+            if entry.release_tag == channel.tag() {
                 kadr_version = release.version.clone();
             }
             if let Some(remote_ts) = release.asset_timestamps.get(filename) {
@@ -204,6 +245,7 @@ pub struct InstallOptions {
     pub context_menu: bool,
     pub default_image_viewer: bool,
     pub default_video_viewer: bool,
+    pub channel: Channel,
 }
 
 impl Default for InstallOptions {
@@ -218,6 +260,7 @@ impl Default for InstallOptions {
             context_menu: true,
             default_image_viewer: false,
             default_video_viewer: false,
+            channel: Channel::default(),
         }
     }
 }
@@ -262,8 +305,13 @@ pub fn run_install(opts: &InstallOptions, tx: mpsc::Sender<InstallProgress>) {
     }
 }
 
-pub fn run_update(install_dir: &std::path::Path, tx: mpsc::Sender<InstallProgress>) {
-    let result = get_pending_updates(install_dir);
+pub fn run_update(
+    install_dir: &std::path::Path,
+    channel: Channel,
+    tx: mpsc::Sender<InstallProgress>,
+) {
+    let result = get_pending_updates(install_dir, channel);
+    store_channel(channel);
     if result.pending.is_empty() {
         let _ = tx.send(InstallProgress::Log("Already up to date.".to_owned()));
         let _ = tx.send(InstallProgress::Done);
@@ -320,27 +368,25 @@ fn do_install(opts: &InstallOptions, tx: &mpsc::Sender<InstallProgress>) -> Resu
         let _ = tx.send(InstallProgress::Step(s / steps));
     };
 
-    // 1. Create install directory
     send_log("Creating install directory…", tx);
     std::fs::create_dir_all(&opts.install_dir)
         .with_context(|| format!("Cannot create {}", opts.install_dir.display()))?;
     step += 1.0;
     send_step(step, tx);
 
-    // 2. Download all configured files
-    let kadr_release = fetch_release("kadr");
+    let kadr_release = fetch_release(opts.channel.tag());
     let kadr_version = kadr_release
         .as_ref()
         .and_then(|r| r.version.clone())
         .unwrap_or_else(|| "unknown".to_owned());
-    let entries = load_config();
+    let entries = load_config_for_channel(opts.channel);
     let n_files = entries.len() as f32;
     send_log("Downloading files…", tx);
     for (i, entry) in entries.iter().enumerate() {
         let start = (step + i as f32 / n_files) / steps;
         let end = (step + (i as f32 + 1.0) / n_files) / steps;
         let filename = filename_from_url(&entry.url);
-        let remote_ts = if entry.release_tag == "kadr" {
+        let remote_ts = if entry.release_tag == opts.channel.tag() {
             kadr_release
                 .as_ref()
                 .and_then(|r| r.asset_timestamps.get(filename).cloned())
@@ -365,7 +411,6 @@ fn do_install(opts: &InstallOptions, tx: &mpsc::Sender<InstallProgress>) -> Resu
 
     let exe_path = opts.install_dir.join("kadr.exe");
 
-    // 4. Desktop shortcut
     if opts.desktop_shortcut {
         send_log("Creating desktop shortcut…", tx);
         let desktop = desktop_dir();
@@ -374,7 +419,6 @@ fn do_install(opts: &InstallOptions, tx: &mpsc::Sender<InstallProgress>) -> Resu
     step += 1.0;
     send_step(step, tx);
 
-    // 5. Start menu shortcut
     if opts.start_menu_shortcut {
         send_log("Creating Start Menu shortcut…", tx);
         let sm = start_menu_dir();
@@ -384,7 +428,6 @@ fn do_install(opts: &InstallOptions, tx: &mpsc::Sender<InstallProgress>) -> Resu
     step += 1.0;
     send_step(step, tx);
 
-    // 6. Add to PATH
     if opts.add_to_path {
         send_log("Adding to user PATH…", tx);
         add_to_user_path(&opts.install_dir)?;
@@ -392,7 +435,6 @@ fn do_install(opts: &InstallOptions, tx: &mpsc::Sender<InstallProgress>) -> Resu
     step += 1.0;
     send_step(step, tx);
 
-    // 7. Context menu
     if opts.context_menu {
         send_log("Registering context menu…", tx);
         register_context_menu(&exe_path)?;
@@ -400,7 +442,6 @@ fn do_install(opts: &InstallOptions, tx: &mpsc::Sender<InstallProgress>) -> Resu
     step += 1.0;
     send_step(step, tx);
 
-    // 8. Default viewers + uninstall registry entry
     if opts.default_image_viewer {
         send_log("Setting default image viewer…", tx);
         set_default_image_viewer(&exe_path)?;
@@ -411,6 +452,7 @@ fn do_install(opts: &InstallOptions, tx: &mpsc::Sender<InstallProgress>) -> Resu
     }
     register_uninstall_entry(&exe_path, &opts.install_dir, &kadr_version)?;
     write_install_registry(&opts.install_dir, &kadr_version)?;
+    store_channel(opts.channel);
     refresh_icon_cache();
     step += 1.0;
     send_step(step, tx);
@@ -418,8 +460,6 @@ fn do_install(opts: &InstallOptions, tx: &mpsc::Sender<InstallProgress>) -> Resu
     send_log("Done!", tx);
     Ok(())
 }
-
-// ── Download ──────────────────────────────────────────────────────────────────
 
 fn head_content_length(url: &str) -> Option<u64> {
     ureq::head(url).call().ok().and_then(|r| {
@@ -635,8 +675,6 @@ fn set_user_file_assoc(ext: &str, prog_id: &str) -> Result<()> {
     Ok(())
 }
 
-// ── Uninstall entry ───────────────────────────────────────────────────────────
-
 fn register_uninstall_entry(exe: &Path, install_dir: &Path, version: &str) -> Result<()> {
     use winreg::{RegKey, enums::*};
     let hkcu = RegKey::predef(HKEY_CURRENT_USER);
@@ -661,8 +699,6 @@ fn register_uninstall_entry(exe: &Path, install_dir: &Path, version: &str) -> Re
     Ok(())
 }
 
-// ── Registry ─────────────────────────────────────────────────────────────────
-
 fn write_install_registry(install_dir: &Path, version: &str) -> Result<()> {
     use winreg::{RegKey, enums::*};
     let hkcu = RegKey::predef(HKEY_CURRENT_USER);
@@ -676,7 +712,32 @@ fn write_install_registry(install_dir: &Path, version: &str) -> Result<()> {
     Ok(())
 }
 
-// ── PowerShell helper ─────────────────────────────────────────────────────────
+pub fn stored_channel() -> Channel {
+    use winreg::{RegKey, enums::*};
+    RegKey::predef(HKEY_CURRENT_USER)
+        .open_subkey(KADR_REG_KEY)
+        .ok()
+        .and_then(|key| key.get_value::<String, _>("Channel").ok())
+        .map(|s| {
+            if s == "beta" {
+                Channel::Beta
+            } else {
+                Channel::Stable
+            }
+        })
+        .unwrap_or(Channel::Stable)
+}
+
+fn store_channel(channel: Channel) {
+    use winreg::{RegKey, enums::*};
+    if let Ok((key, _)) = RegKey::predef(HKEY_CURRENT_USER).create_subkey(KADR_REG_KEY) {
+        let value = match channel {
+            Channel::Stable => "stable",
+            Channel::Beta => "beta",
+        };
+        let _ = key.set_value("Channel", &value.to_owned());
+    }
+}
 
 fn powershell(script: &str) -> Result<()> {
     use std::os::windows::process::CommandExt;

@@ -4,7 +4,8 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
 use crate::{
-    install::{InstallOptions, InstallProgress},
+    install::{Channel, InstallOptions, InstallProgress},
+    theme,
     ui::{done, options, progress, welcome},
 };
 
@@ -49,11 +50,14 @@ pub struct InstallerApp {
     pub patchnotes_text: Arc<Mutex<Option<String>>>,
     pub selected_panel: Option<welcome::Panel>,
     pub installer_dl: Arc<Mutex<welcome::InstallerDlState>>,
+    pub selected_channel: Channel,
+    pub installed_channel: Channel,
 }
 
 impl InstallerApp {
     pub fn new(cc: &eframe::CreationContext<'_>) -> Self {
         let existing_install = crate::install::detect_existing_install();
+        let channel = crate::install::stored_channel();
 
         let remote_sizes: Arc<Mutex<Option<HashMap<String, u64>>>> = Arc::new(Mutex::new(None));
         let sizes_ref = Arc::clone(&remote_sizes);
@@ -120,6 +124,8 @@ impl InstallerApp {
             patchnotes_text,
             selected_panel: None,
             installer_dl: Arc::new(Mutex::new(welcome::InstallerDlState::Idle)),
+            selected_channel: channel,
+            installed_channel: channel,
         }
     }
 }
@@ -129,7 +135,7 @@ impl eframe::App for InstallerApp {
         let ctx = ui.ctx().clone();
         apply_theme(&ctx);
 
-        let frame = egui::Frame::default().fill(egui::Color32::from_rgb(11, 10, 16));
+        let frame = egui::Frame::default().fill(theme::BG);
         egui::CentralPanel::default().frame(frame).show(ui, |ui| {
             let kadr_ver = self.remote_kadr_version.lock().unwrap().clone();
             draw_header(ui, kadr_ver.as_deref());
@@ -163,6 +169,8 @@ impl eframe::App for InstallerApp {
                         pending.as_deref(),
                         &mut self.selected_panel,
                         &installer_dl,
+                        &mut self.selected_channel,
+                        self.installed_channel,
                     ) {
                         match action {
                             welcome::WelcomeAction::RunUpdate => {
@@ -170,8 +178,9 @@ impl eframe::App for InstallerApp {
                                     let (tx, rx) = mpsc::channel();
                                     let dir = existing.dir.clone();
                                     let dir2 = dir.clone();
+                                    let channel = self.selected_channel;
                                     std::thread::spawn(move || {
-                                        crate::install::run_update(&dir, tx);
+                                        crate::install::run_update(&dir, channel, tx);
                                     });
                                     let opts = InstallOptions {
                                         install_dir: dir2,
@@ -363,20 +372,20 @@ fn draw_header(ui: &mut egui::Ui, kadr_version: Option<&str>) {
     let (rect, _) = ui.allocate_exact_size(egui::vec2(available_w, height), egui::Sense::hover());
     let p = ui.painter();
 
-    p.rect_filled(rect, 0.0, egui::Color32::from_rgb(15, 13, 22));
+    p.rect_filled(rect, 0.0, theme::SURFACE);
     p.text(
         rect.min + egui::vec2(24.0, 12.0),
         egui::Align2::LEFT_TOP,
         "kadr",
         egui::FontId::proportional(22.0),
-        egui::Color32::from_rgb(99, 155, 255),
+        theme::ACCENT_TEXT,
     );
     p.text(
         rect.min + egui::vec2(74.0, 17.0),
         egui::Align2::LEFT_TOP,
         "installer",
         egui::FontId::proportional(13.0),
-        egui::Color32::from_gray(85),
+        theme::TEXT_MUTED,
     );
 
     let ver_text = format!(
@@ -389,30 +398,32 @@ fn draw_header(ui: &mut egui::Ui, kadr_version: Option<&str>) {
         egui::Align2::RIGHT_CENTER,
         &ver_text,
         egui::FontId::monospace(10.5),
-        egui::Color32::from_gray(80),
+        theme::TEXT_MUTED,
     );
 
     p.hline(
         rect.left()..=rect.right(),
         rect.bottom(),
-        egui::Stroke::new(
-            1.0,
-            egui::Color32::from_rgba_premultiplied(99, 155, 255, 50),
-        ),
+        egui::Stroke::new(1.0, theme::accent_fill(50)),
     );
 }
 
 fn apply_theme(ctx: &egui::Context) {
     let mut style = (*ctx.global_style()).clone();
     style.visuals.dark_mode = true;
-    style.visuals.panel_fill = egui::Color32::from_rgb(11, 10, 16);
-    style.visuals.window_fill = egui::Color32::from_rgb(16, 14, 22);
-    style.visuals.extreme_bg_color = egui::Color32::from_rgb(8, 7, 12);
-    style.visuals.widgets.inactive.bg_fill = egui::Color32::from_rgb(22, 20, 30);
-    style.visuals.widgets.hovered.bg_fill = egui::Color32::from_rgb(30, 27, 42);
-    style.visuals.widgets.active.bg_fill = egui::Color32::from_rgb(40, 36, 58);
-    style.visuals.override_text_color = Some(egui::Color32::from_gray(210));
-    style.visuals.widgets.noninteractive.bg_stroke =
-        egui::Stroke::new(1.0, egui::Color32::from_gray(35));
+    style.visuals.panel_fill = theme::BG;
+    style.visuals.window_fill = theme::SURFACE2;
+    style.visuals.faint_bg_color = theme::BG;
+    style.visuals.extreme_bg_color = theme::BG;
+    style.visuals.override_text_color = Some(theme::TEXT);
+    style.visuals.widgets.noninteractive.bg_fill = theme::SURFACE;
+    style.visuals.widgets.noninteractive.bg_stroke = egui::Stroke::new(1.0, theme::BORDER);
+    style.visuals.widgets.inactive.bg_fill = theme::SURFACE2;
+    style.visuals.widgets.hovered.bg_fill = theme::SURFACE4;
+    style.visuals.widgets.hovered.bg_stroke = egui::Stroke::new(1.0, theme::BORDER);
+    style.visuals.widgets.active.bg_stroke = egui::Stroke::new(1.0, theme::ACCENT);
+    style.visuals.selection.bg_fill = theme::accent_fill(60);
+    style.visuals.selection.stroke = egui::Stroke::new(1.0, theme::ACCENT);
+    style.visuals.hyperlink_color = theme::ACCENT;
     ctx.set_global_style(style);
 }
