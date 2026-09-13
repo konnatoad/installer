@@ -137,7 +137,11 @@ impl eframe::App for InstallerApp {
 
         let frame = egui::Frame::default().fill(theme::BG);
         egui::CentralPanel::default().frame(frame).show(ui, |ui| {
-            let kadr_ver = self.remote_kadr_version.lock().unwrap().clone();
+            let kadr_ver = self
+                .existing_install
+                .as_ref()
+                .and_then(|e| e.version.clone())
+                .or_else(|| self.remote_kadr_version.lock().unwrap().clone());
             draw_header(ui, kadr_ver.as_deref());
             ui.add_space(8.0);
 
