@@ -4,7 +4,7 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
 use crate::{
-    install::{InstallOptions, InstallProgress},
+    install::{Channel, InstallOptions, InstallProgress},
     ui::{done, options, progress, welcome},
 };
 
@@ -49,11 +49,14 @@ pub struct InstallerApp {
     pub patchnotes_text: Arc<Mutex<Option<String>>>,
     pub selected_panel: Option<welcome::Panel>,
     pub installer_dl: Arc<Mutex<welcome::InstallerDlState>>,
+    pub selected_channel: Channel,
+    pub installed_channel: Channel,
 }
 
 impl InstallerApp {
     pub fn new(cc: &eframe::CreationContext<'_>) -> Self {
         let existing_install = crate::install::detect_existing_install();
+        let channel = crate::install::stored_channel();
 
         let remote_sizes: Arc<Mutex<Option<HashMap<String, u64>>>> = Arc::new(Mutex::new(None));
         let sizes_ref = Arc::clone(&remote_sizes);
@@ -120,6 +123,8 @@ impl InstallerApp {
             patchnotes_text,
             selected_panel: None,
             installer_dl: Arc::new(Mutex::new(welcome::InstallerDlState::Idle)),
+            selected_channel: channel,
+            installed_channel: channel,
         }
     }
 }
@@ -163,6 +168,8 @@ impl eframe::App for InstallerApp {
                         pending.as_deref(),
                         &mut self.selected_panel,
                         &installer_dl,
+                        &mut self.selected_channel,
+                        self.installed_channel,
                     ) {
                         match action {
                             welcome::WelcomeAction::RunUpdate => {
@@ -170,8 +177,9 @@ impl eframe::App for InstallerApp {
                                     let (tx, rx) = mpsc::channel();
                                     let dir = existing.dir.clone();
                                     let dir2 = dir.clone();
+                                    let channel = self.selected_channel;
                                     std::thread::spawn(move || {
-                                        crate::install::run_update(&dir, tx);
+                                        crate::install::run_update(&dir, channel, tx);
                                     });
                                     let opts = InstallOptions {
                                         install_dir: dir2,

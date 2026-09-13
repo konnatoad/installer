@@ -1,6 +1,6 @@
 use egui::{Color32, RichText, Stroke, Ui};
 
-use crate::install::InstallOptions;
+use crate::install::{Channel, InstallOptions};
 
 pub enum OptionsAction {
     Back,
@@ -31,10 +31,19 @@ pub fn show(ui: &mut Ui, opts: &mut InstallOptions) -> Option<OptionsAction> {
                     && let Some(dir) = rfd::FileDialog::new()
                         .set_title("Choose install directory")
                         .pick_folder()
-                    {
-                        opts.install_dir = dir;
-                    }
+                {
+                    opts.install_dir = dir;
+                }
             });
+
+            ui.add_space(12.0);
+            section(ui, "Release Channel");
+            egui::ComboBox::from_id_salt("release_channel")
+                .selected_text(opts.channel.label())
+                .show_ui(ui, |ui| {
+                    ui.selectable_value(&mut opts.channel, Channel::Stable, "Stable");
+                    ui.selectable_value(&mut opts.channel, Channel::Beta, "Beta");
+                });
 
             ui.add_space(12.0);
             section(ui, "Shortcuts");
@@ -43,13 +52,29 @@ pub fn show(ui: &mut Ui, opts: &mut InstallOptions) -> Option<OptionsAction> {
 
             ui.add_space(12.0);
             section(ui, "Integration");
-            opt_check(ui, &mut opts.add_to_path, "Add to PATH (use kadr from terminal)");
-            opt_check(ui, &mut opts.context_menu, "Right-click context menu (Open with Kadr)");
+            opt_check(
+                ui,
+                &mut opts.add_to_path,
+                "Add to PATH (use kadr from terminal)",
+            );
+            opt_check(
+                ui,
+                &mut opts.context_menu,
+                "Right-click context menu (Open with Kadr)",
+            );
 
             ui.add_space(12.0);
             section(ui, "Default Viewer");
-            opt_check(ui, &mut opts.default_image_viewer, "Set as default image viewer");
-            opt_check(ui, &mut opts.default_video_viewer, "Set as default video viewer");
+            opt_check(
+                ui,
+                &mut opts.default_image_viewer,
+                "Set as default image viewer",
+            );
+            opt_check(
+                ui,
+                &mut opts.default_video_viewer,
+                "Set as default video viewer",
+            );
         });
 
     ui.add_space(8.0);
@@ -61,11 +86,13 @@ pub fn show(ui: &mut Ui, opts: &mut InstallOptions) -> Option<OptionsAction> {
             action = Some(OptionsAction::Back);
         }
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            let btn = egui::Button::new(
-                RichText::new("Install").color(Color32::from_rgb(145, 190, 255)),
-            )
-            .fill(Color32::from_rgba_premultiplied(99, 155, 255, 38))
-            .stroke(Stroke::new(1.0, Color32::from_rgba_premultiplied(99, 155, 255, 160)));
+            let btn =
+                egui::Button::new(RichText::new("Install").color(Color32::from_rgb(145, 190, 255)))
+                    .fill(Color32::from_rgba_premultiplied(99, 155, 255, 38))
+                    .stroke(Stroke::new(
+                        1.0,
+                        Color32::from_rgba_premultiplied(99, 155, 255, 160),
+                    ));
             if ui.add(btn).clicked() {
                 action = Some(OptionsAction::Install(opts.clone()));
             }

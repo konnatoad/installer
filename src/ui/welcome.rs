@@ -1,3 +1,4 @@
+use crate::install::Channel;
 use egui::{Color32, RichText, Stroke, Ui};
 use std::path::Path;
 
@@ -36,6 +37,8 @@ pub fn show(
     pending_updates: Option<&[String]>,
     selected_panel: &mut Option<Panel>,
     installer_dl: &InstallerDlState,
+    channel: &mut Channel,
+    stored_channel: Channel,
 ) -> Option<WelcomeAction> {
     let mut action = None;
 
@@ -43,7 +46,12 @@ pub fn show(
         return show_fresh_install(ui, total_install_size, patchnotes, &mut action);
     }
 
-    let kadr_outdated = pending_updates.map(|p| p.iter().any(|f| f == "kadr.exe"));
+    let channel_switch_pending = *channel != stored_channel;
+    let kadr_outdated = if channel_switch_pending {
+        Some(true)
+    } else {
+        pending_updates.map(|p| p.iter().any(|f| f == "kadr.exe"))
+    };
     let deps_pending: Vec<&str> = pending_updates
         .unwrap_or(&[])
         .iter()
@@ -51,7 +59,8 @@ pub fn show(
         .map(|f| f.as_str())
         .collect();
     let deps_outdated = pending_updates.map(|_| !deps_pending.is_empty());
-    let has_updates = pending_updates.map(|p| !p.is_empty()).unwrap_or(false);
+    let has_updates =
+        pending_updates.map(|p| !p.is_empty()).unwrap_or(false) || channel_switch_pending;
 
     let inst_current = env!("CARGO_PKG_VERSION");
     let installer_outdated = remote_installer_version.map(|r| r != inst_current);
@@ -69,11 +78,14 @@ pub fn show(
                     ui.set_min_height(avail_h);
                     ui.add_space(12.0);
 
-                    // Update All button
-                    let btn_label = match pending_updates {
-                        None => "Update All  …".to_owned(),
-                        Some([]) => "Up to date".to_owned(),
-                        Some(p) => format!("Update All  ({})", p.len()),
+                    let btn_label = if channel_switch_pending {
+                        "Switch Channel".to_owned()
+                    } else {
+                        match pending_updates {
+                            None => "Update All  …".to_owned(),
+                            Some([]) => "Up to date".to_owned(),
+                            Some(p) => format!("Update All  ({})", p.len()),
+                        }
                     };
                     let btn_active = has_updates;
                     let btn_color = if btn_active {
@@ -143,7 +155,13 @@ pub fn show(
                     show_patchnotes(ui, patchnotes);
                 }
                 Some(Panel::Kadr) => {
-                    if let Some(a) = show_kadr_panel(ui, installed_kadr_version, kadr_outdated) {
+                    if let Some(a) = show_kadr_panel(
+                        ui,
+                        installed_kadr_version,
+                        kadr_outdated,
+                        channel,
+                        stored_channel,
+                    ) {
                         action = Some(a);
                     }
                 }
@@ -279,17 +297,43 @@ fn show_kadr_panel(
     ui: &mut Ui,
     installed_version: Option<&str>,
     outdated: Option<bool>,
+    channel: &mut Channel,
+    stored_channel: Channel,
 ) -> Option<WelcomeAction> {
     let mut action = None;
     let w = ui.available_width() - 20.0;
 
     panel_title(ui, "Kadr");
 
+    ui.add_space(8.0);
+    ui.horizontal(|ui| {
+        ui.label(
+            RichText::new("Channel")
+                .size(12.0)
+                .color(Color32::from_gray(140)),
+        );
+        egui::ComboBox::from_id_salt("kadr_channel")
+            .selected_text(channel.label())
+            .show_ui(ui, |ui| {
+                ui.selectable_value(channel, Channel::Stable, "Stable");
+                ui.selectable_value(channel, Channel::Beta, "Beta");
+            });
+    });
+
+    let switching = *channel != stored_channel;
     let (status_text, status_color) = match outdated {
         None => ("Checking for updates…".to_owned(), Color32::from_gray(80)),
         Some(false) => (
             format!("v{} — Up to date", installed_version.unwrap_or("?")),
             Color32::from_rgb(80, 200, 120),
+        ),
+        Some(true) if switching => (
+            format!(
+                "v{} installed — switch to {} available",
+                installed_version.unwrap_or("?"),
+                channel.label()
+            ),
+            Color32::from_rgb(220, 80, 80),
         ),
         Some(true) => (
             format!("v{} — Update available", installed_version.unwrap_or("?")),
@@ -301,7 +345,12 @@ fn show_kadr_panel(
 
     if outdated == Some(true) {
         ui.add_space(16.0);
-        if content_btn(ui, w, "Update Kadr", Color32::from_rgb(99, 155, 255)) {
+        let label = if switching {
+            "Switch Channel"
+        } else {
+            "Update Kadr"
+        };
+        if content_btn(ui, w, label, Color32::from_rgb(99, 155, 255)) {
             action = Some(WelcomeAction::RunUpdate);
         }
     }
