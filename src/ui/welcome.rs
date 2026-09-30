@@ -235,13 +235,18 @@ fn show_fresh_install(
                 })
                 .show(ui, |ui| {
                     ui.set_width(total_w - 24.0);
-                    for line in notes_text.lines() {
-                        let t = line.trim();
-                        if t.is_empty() {
-                            continue;
-                        }
-                        ui.label(RichText::new(t).size(11.5).color(theme::TEXT_DIM));
-                    }
+                    egui::ScrollArea::vertical()
+                        .id_salt("fresh_install_patchnotes")
+                        .max_height(200.0)
+                        .show(ui, |ui| {
+                            for line in notes_text.lines() {
+                                let t = line.trim();
+                                if t.is_empty() {
+                                    continue;
+                                }
+                                ui.label(RichText::new(t).size(11.5).color(theme::TEXT_DIM));
+                            }
+                        });
                 });
 
             ui.add_space(14.0);
@@ -258,6 +263,7 @@ fn show_fresh_install(
 fn show_patchnotes(ui: &mut Ui, patchnotes: Option<&str>) {
     let notes_text = patchnotes.unwrap_or("Loading…");
     let w = ui.available_width() - 20.0;
+    let avail_h = ui.available_height();
     egui::Frame::new()
         .fill(theme::SURFACE)
         .stroke(Stroke::new(1.0, theme::BORDER))
@@ -270,13 +276,18 @@ fn show_patchnotes(ui: &mut Ui, patchnotes: Option<&str>) {
         })
         .show(ui, |ui| {
             ui.set_width(w - 24.0);
-            for line in notes_text.lines() {
-                let t = line.trim();
-                if t.is_empty() {
-                    continue;
-                }
-                ui.label(RichText::new(t).size(11.5).color(theme::TEXT_DIM));
-            }
+            egui::ScrollArea::vertical()
+                .id_salt("sidebar_patchnotes")
+                .max_height((avail_h - 24.0).max(60.0))
+                .show(ui, |ui| {
+                    for line in notes_text.lines() {
+                        let t = line.trim();
+                        if t.is_empty() {
+                            continue;
+                        }
+                        ui.label(RichText::new(t).size(11.5).color(theme::TEXT_DIM));
+                    }
+                });
         });
 }
 
